@@ -1,8 +1,12 @@
-# WaterUI Video GPU
+# waterui-video-gpu
 
-`waterui-video-gpu` provides the self-drawn GPU realization of the semantic
-`Video` and `VideoPlayer` components from `waterui-video`.
+GPU-drawn video player realization for WaterUI.
 
-It connects WaterUI controls and `GpuSurface` presentation to the UI-agnostic
-WaterKit media engine. Applications normally receive this realization through
-their selected WaterUI backend rather than installing it directly.
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
