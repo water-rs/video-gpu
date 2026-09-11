@@ -1088,6 +1088,16 @@ checksum = "9885fa71e26b8ab7855e2ec7cae6e9b380edff76cd052e07c683a0319d51b3a2"
 
 [[package]]
 name = "core-foundation"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
@@ -2816,6 +2826,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-util"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-channel",
+ "http",
+ "http-body",
+ "hyper",
+ "ipnet",
+ "percent-encoding",
+ "pin-project-lite",
+ "system-configuration",
+ "tokio",
+ "tower-service",
+ "tracing",
+ "windows-registry",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3309,6 +3341,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "ipnet"
+version = "2.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
 name = "iso8601"
@@ -4091,6 +4129,17 @@ checksum = "1fb9b5c752f145ac5046bccc3c4f62892e3c950c1d1eab80c5949cd68a2078db"
 dependencies = [
  "ctor",
  "web-time",
+]
+
+[[package]]
+name = "mio"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
+dependencies = [
+ "libc",
+ "wasi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5906,6 +5955,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-platform-verifier"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "jni 0.22.4",
+ "log",
+ "once_cell",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-platform-verifier-android",
+ "rustls-webpki",
+ "security-framework",
+ "security-framework-sys",
+ "webpki-root-certs",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "rustls-platform-verifier-android"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
+
+[[package]]
 name = "rustls-webpki"
 version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6011,7 +6087,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
 dependencies = [
  "bitflags 2.13.1",
- "core-foundation",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "libc",
  "security-framework-sys",
@@ -6763,6 +6839,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-configuration"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a13f3d0daba03132c0aa9767f98351b3488edc2c100cda2d2ec2b04f3d8d3c8b"
+dependencies = [
+ "bitflags 2.13.1",
+ "core-foundation 0.9.4",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "system-deps"
 version = "7.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6966,7 +7063,11 @@ version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
+ "libc",
+ "mio",
  "pin-project-lite",
+ "socket2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7525,9 +7626,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-streams"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "waterkit-audio"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "async-channel",
  "cpal 0.18.2",
@@ -7557,13 +7671,13 @@ dependencies = [
  "web-sys",
  "windows 0.62.2",
  "zbus",
- "zenwave",
+ "zenwave 0.6.1",
 ]
 
 [[package]]
 name = "waterkit-build"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "jni 0.22.4",
  "ndk-context",
@@ -7606,7 +7720,7 @@ dependencies = [
 [[package]]
 name = "waterkit-codec"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "avif-parse",
  "cros-codecs",
@@ -7670,19 +7784,17 @@ dependencies = [
 [[package]]
 name = "waterkit-fs"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "async-fs",
  "dirs",
  "indexed_db_futures",
  "jni 0.22.4",
- "js-sys",
  "serde",
  "serde_json",
  "swift-bridge",
  "thiserror 2.0.20",
  "tracing",
- "wasm-bindgen",
  "waterkit-build 0.1.1 (git+https://github.com/water-rs/waterkit.git?branch=dev)",
  "windows 0.62.2",
 ]
@@ -7755,7 +7867,7 @@ dependencies = [
  "async-channel",
  "blocking",
  "brightness",
- "core-foundation",
+ "core-foundation 0.10.1",
  "jni 0.22.4",
  "ndk-context",
  "objc2",
@@ -7774,7 +7886,7 @@ dependencies = [
 [[package]]
 name = "waterkit-video"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "waterkit-video-container",
  "waterkit-video-core",
@@ -7785,7 +7897,7 @@ dependencies = [
 [[package]]
 name = "waterkit-video-container"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "broadcast-common",
  "byteorder",
@@ -7800,7 +7912,7 @@ dependencies = [
 [[package]]
 name = "waterkit-video-core"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "thiserror 2.0.20",
 ]
@@ -7808,7 +7920,7 @@ dependencies = [
 [[package]]
 name = "waterkit-video-player"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "aes",
  "async-channel",
@@ -7831,7 +7943,7 @@ dependencies = [
 [[package]]
 name = "waterkit-video-streaming"
 version = "0.1.1"
-source = "git+https://github.com/water-rs/waterkit.git?branch=dev#05a815382180766a3c7c35a5840015d128e2a0af"
+source = "git+https://github.com/water-rs/waterkit.git?branch=dev#8465221f3087b2403f92e1edc0c3ba384a2b3a83"
 dependencies = [
  "async-fs",
  "base64 0.22.1",
@@ -7847,7 +7959,7 @@ dependencies = [
  "uuid",
  "waterkit-video-core",
  "windows 0.62.2",
- "zenwave",
+ "zenwave 0.6.1",
 ]
 
 [[package]]
@@ -8181,7 +8293,7 @@ dependencies = [
  "waterui-text",
  "waterui-url",
  "waterui-video",
- "zenwave",
+ "zenwave 0.5.0",
 ]
 
 [[package]]
@@ -8309,7 +8421,7 @@ dependencies = [
  "sha2",
  "tracing",
  "waterui-str",
- "zenwave",
+ "zenwave 0.5.0",
 ]
 
 [[package]]
@@ -8326,7 +8438,7 @@ dependencies = [
 
 [[package]]
 name = "waterui-video-gpu"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-channel",
  "executor-core",
@@ -8495,6 +8607,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd9fbf173b4b38f2f8bbb0082a0d4cb21f263a70811f5fccb1663c421c66d9f9"
 dependencies = [
  "ebml-iterable",
+]
+
+[[package]]
+name = "webpki-root-certs"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
@@ -8995,6 +9116,17 @@ checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
  "windows-core 0.62.2",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
 ]
 
 [[package]]
@@ -9551,7 +9683,6 @@ dependencies = [
  "async-lock",
  "async-native-tls",
  "async-net",
- "async-tungstenite",
  "base64 0.22.1",
  "block",
  "dirs",
@@ -9582,9 +9713,57 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots",
+]
+
+[[package]]
+name = "zenwave"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcebfb9dc75f253b47fa02ca3116d90c9fde75487e21586133a5d017c645081e"
+dependencies = [
+ "anyhow",
+ "async-fs",
+ "async-io",
+ "async-lock",
+ "async-native-tls",
+ "async-net",
+ "async-tungstenite",
+ "base64 0.22.1",
+ "cfg_aliases 0.2.2",
+ "dirs",
+ "dns-lookup",
+ "executor-core",
+ "futures-channel",
+ "futures-io",
+ "futures-rustls",
+ "futures-util",
+ "gloo-timers 0.3.0",
+ "http",
+ "http-body-util",
+ "http-kit",
+ "httpdate",
+ "hyper",
+ "hyper-util",
+ "js-sys",
+ "native-tls",
+ "once_cell",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tower-service",
+ "tracing",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-streams 0.5.0",
+ "web-sys",
 ]
 
 [[package]]
