@@ -2352,6 +2352,8 @@ struct VideoRenderer {
     video_surface_receiver: AndroidVideoSurfaceReceiver,
     render_pipeline: Option<wgpu::RenderPipeline>,
     bind_group_layout: Option<wgpu::BindGroupLayout>,
+    spherical_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    spherical_bind_group: Option<wgpu::BindGroup>,
     sampler: Option<wgpu::Sampler>,
     surface_format: Option<wgpu::TextureFormat>,
     color_profile: VideoColorInfo,
@@ -2702,6 +2704,8 @@ impl VideoRenderer {
             video_surface_receiver,
             render_pipeline: None,
             bind_group_layout: None,
+            spherical_bind_group_layout: None,
+            spherical_bind_group: None,
             sampler: None,
             surface_format: None,
             color_profile: VideoColorInfo::default(),
@@ -2919,9 +2923,15 @@ impl VideoRenderer {
         tracing::info!("create video GPU render pipeline surface_format={format:?}");
 
         let spherical = self.projection.is_spherical();
-        let bind_group_layout = create_video_bind_group_layout(device, spherical);
-        let render_pipeline =
-            create_video_render_pipeline(device, &bind_group_layout, format, spherical);
+        let bind_group_layout = create_video_bind_group_layout(device);
+        let spherical_bind_group_layout =
+            spherical.then(|| create_spherical_projection_bind_group_layout(device));
+        let render_pipeline = create_video_render_pipeline(
+            device,
+            &bind_group_layout,
+            spherical_bind_group_layout.as_ref(),
+            format,
+        );
         let sampler = create_video_sampler(device);
         let color_uniform_buffer =
             create_color_uniform_buffer(device, self.current_color_uniform());
@@ -2934,8 +2944,14 @@ impl VideoRenderer {
                 SphericalProjectionUniform::read(projection, 1, 1),
             )
         });
+        let spherical_bind_group = spherical_bind_group_layout
+            .as_ref()
+            .zip(spherical_projection_uniform_buffer.as_ref())
+            .map(|(layout, buffer)| create_spherical_projection_bind_group(device, layout, buffer));
 
         self.bind_group_layout = Some(bind_group_layout);
+        self.spherical_bind_group_layout = spherical_bind_group_layout;
+        self.spherical_bind_group = spherical_bind_group;
         self.render_pipeline = Some(render_pipeline);
         self.sampler = Some(sampler);
         self.color_uniform_buffer = Some(color_uniform_buffer);
@@ -5048,7 +5064,7 @@ impl VideoRenderer {
         let uv_view = decoded_gpu_frame
             .uv_texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut entries = vec![
+        let entries = [
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::TextureView(&y_view),
@@ -5066,12 +5082,6 @@ impl VideoRenderer {
                 resource: color_uniform_buffer.as_entire_binding(),
             },
         ];
-        if let Some(projection_uniform) = self.spherical_projection_uniform_buffer.as_ref() {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 5,
-                resource: projection_uniform.as_entire_binding(),
-            });
-        }
         let bind_group = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Video bind group"),
             layout: bind_group_layout,
@@ -5315,6 +5325,7 @@ impl VideoRenderer {
         let Some(vertex_buffer) = self.vertex_buffer.as_ref() else {
             return;
         };
+        let spherical_bind_group = self.spherical_bind_group.as_ref();
 
         let mut encoder = frame
             .device
@@ -5341,6 +5352,9 @@ impl VideoRenderer {
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, bind_group, &[]);
+            if let Some(spherical_bind_group) = spherical_bind_group {
+                pass.set_bind_group(1, spherical_bind_group, &[]);
+            }
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.draw(0..6, 0..1);
         }
@@ -5616,24 +5630,55 @@ impl Drop for MediaSessionState {
     }
 }
 
-fn create_video_bind_group_layout(device: &wgpu::Device, spherical: bool) -> wgpu::BindGroupLayout {
-    let mut entries = vec![
-        video_texture_layout_entry(0),
-        video_texture_layout_entry(1),
-        wgpu::BindGroupLayoutEntry {
-            binding: 2,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        },
-        uniform_layout_entry(3),
-    ];
-    if spherical {
-        entries.push(uniform_layout_entry(5));
-    }
+/// Layout of the video planes group (`@group(0)`).
+///
+/// The entries must stay dense and in shader-binding order. Shaders reach the
+/// GPU as ahead-of-time SPIR-V through `create_shader_module_passthrough`, so
+/// naga never re-emits them, while `wgpu-hal` numbers Vulkan bindings by entry
+/// position: a layout that skips a binding the shader declares silently shifts
+/// every later one, and the driver then reads a descriptor that is not there.
+fn create_video_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Video bind group layout"),
-        entries: &entries,
+        entries: &[
+            video_texture_layout_entry(0),
+            video_texture_layout_entry(1),
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            uniform_layout_entry(3),
+        ],
+    })
+}
+
+/// Layout of the spherical projection group (`@group(1)`).
+///
+/// The projection uniform has a group of its own because `@group(0)` also
+/// carries the compute-only storage texture at binding 4, which a render
+/// pipeline never binds; see [`create_video_bind_group_layout`].
+fn create_spherical_projection_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Spherical projection bind group layout"),
+        entries: &[uniform_layout_entry(0)],
+    })
+}
+
+/// Binds the projection uniform as the spherical pipeline's `@group(1)`.
+fn create_spherical_projection_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    projection_uniform: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Spherical projection bind group"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: projection_uniform.as_entire_binding(),
+        }],
     })
 }
 
@@ -5665,12 +5710,17 @@ const fn video_texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry 
     }
 }
 
+/// Builds the video render pipeline.
+///
+/// A spherical pipeline is exactly one that carries a projection group, so
+/// `spherical_bind_group_layout` selects both the shader and the layout.
 fn create_video_render_pipeline(
     device: &wgpu::Device,
     bind_group_layout: &wgpu::BindGroupLayout,
+    spherical_bind_group_layout: Option<&wgpu::BindGroupLayout>,
     format: wgpu::TextureFormat,
-    spherical: bool,
 ) -> wgpu::RenderPipeline {
+    let spherical = spherical_bind_group_layout.is_some();
     let shader = if spherical {
         &crate::VIDEO_YUV_SPHERICAL_SHADER
     } else {
@@ -5679,9 +5729,11 @@ fn create_video_render_pipeline(
     let fragment_entry_point = if spherical { "fs_spherical" } else { "fs_main" };
     let (vertex_shader, fragment_shader) =
         shader.create_render_stages(device, "vs_main", fragment_entry_point);
+    let mut bind_group_layouts = vec![Some(bind_group_layout)];
+    bind_group_layouts.extend(spherical_bind_group_layout.map(Some));
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Video pipeline layout"),
-        bind_group_layouts: &[Some(bind_group_layout)],
+        bind_group_layouts: &bind_group_layouts,
         immediate_size: 0,
     });
 
@@ -5933,7 +5985,8 @@ mod tests {
     use super::{
         ColorOutputTarget, ContentMode, DecodedPixelLayout, PlaybackObservability, PlaybackPolicy,
         PresentedFrameHistory, SphericalProjectionUniform, VideoColorInfo, Volume, build_vertices,
-        create_color_uniform_buffer, create_spherical_projection_uniform_buffer,
+        create_color_uniform_buffer, create_spherical_projection_bind_group,
+        create_spherical_projection_bind_group_layout, create_spherical_projection_uniform_buffer,
         create_video_bind_group_layout, create_video_render_pipeline, create_video_sampler,
         effective_audio_volume, next_audio_selection, next_subtitle_selection,
         next_video_selection, playback_clock_position, progress_for_position,
@@ -6066,6 +6119,7 @@ mod tests {
         color: VideoColorInfo,
         pipeline: Option<wgpu::RenderPipeline>,
         bind_group: Option<wgpu::BindGroup>,
+        spherical_bind_group: Option<wgpu::BindGroup>,
         vertex_buffer: Option<wgpu::Buffer>,
         spherical_projection: Option<SphericalProjectionUniform>,
     }
@@ -6077,6 +6131,7 @@ mod tests {
                 color,
                 pipeline: None,
                 bind_group: None,
+                spherical_bind_group: None,
                 vertex_buffer: None,
                 spherical_projection: None,
             }
@@ -6092,6 +6147,7 @@ mod tests {
                 color,
                 pipeline: None,
                 bind_group: None,
+                spherical_bind_group: None,
                 vertex_buffer: None,
                 spherical_projection: Some(spherical_projection),
             }
@@ -6105,12 +6161,14 @@ mod tests {
             _env: &mut waterui_core::Environment,
         ) -> impl core::future::Future<Output = ()> {
             let spherical = self.spherical_projection.is_some();
-            let bind_group_layout = create_video_bind_group_layout(ctx.device, spherical);
+            let bind_group_layout = create_video_bind_group_layout(ctx.device);
+            let spherical_bind_group_layout =
+                spherical.then(|| create_spherical_projection_bind_group_layout(ctx.device));
             let pipeline = create_video_render_pipeline(
                 ctx.device,
                 &bind_group_layout,
+                spherical_bind_group_layout.as_ref(),
                 ctx.surface_format,
-                spherical,
             );
             let sampler = create_video_sampler(ctx.device);
             let uniform = create_color_uniform_buffer(
@@ -6128,7 +6186,7 @@ mod tests {
             let projection_uniform = self.spherical_projection.map(|projection| {
                 create_spherical_projection_uniform_buffer(ctx.device, projection)
             });
-            let mut entries = vec![
+            let entries = [
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&y_view),
@@ -6146,17 +6204,17 @@ mod tests {
                     resource: uniform.as_entire_binding(),
                 },
             ];
-            if let Some(projection_uniform) = projection_uniform.as_ref() {
-                entries.push(wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: projection_uniform.as_entire_binding(),
-                });
-            }
             let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Video color visual bind group"),
                 layout: &bind_group_layout,
                 entries: &entries,
             });
+            let spherical_bind_group = spherical_bind_group_layout
+                .as_ref()
+                .zip(projection_uniform.as_ref())
+                .map(|(layout, buffer)| {
+                    create_spherical_projection_bind_group(ctx.device, layout, buffer)
+                });
             let vertices = build_vertices(
                 ContentMode::Stretch,
                 VISUAL_WIDTH,
@@ -6185,6 +6243,7 @@ mod tests {
 
             self.pipeline = Some(pipeline);
             self.bind_group = Some(bind_group);
+            self.spherical_bind_group = spherical_bind_group;
             self.vertex_buffer = Some(vertex_buffer);
             core::future::ready(())
         }
@@ -6198,6 +6257,7 @@ mod tests {
                 .bind_group
                 .as_ref()
                 .expect("visual bind group must be set up");
+            let spherical_bind_group = self.spherical_bind_group.as_ref();
             let vertex_buffer = self
                 .vertex_buffer
                 .as_ref()
@@ -6227,6 +6287,9 @@ mod tests {
                 });
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bind_group, &[]);
+                if let Some(spherical_bind_group) = spherical_bind_group {
+                    pass.set_bind_group(1, spherical_bind_group, &[]);
+                }
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.draw(0..6, 0..1);
             }

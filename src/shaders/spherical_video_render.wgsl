@@ -9,7 +9,7 @@ struct SphericalProjectionParams {
     _padding2: u32,
 }
 
-@group(0) @binding(5) var<uniform> spherical_projection: SphericalProjectionParams;
+@group(1) @binding(0) var<uniform> spherical_projection: SphericalProjectionParams;
 
 const SPHERICAL_MONO: u32 = 0u;
 const SPHERICAL_TOP_BOTTOM: u32 = 1u;
