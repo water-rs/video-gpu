@@ -4,7 +4,7 @@ All notable changes to `waterui-video-gpu` are documented in this file.
 
 ## [Unreleased]
 
-## [0.4.0](https://github.com/water-rs/video-gpu/compare/v0.3.0...v0.4.0) - 2026-09-11
+## [0.3.1](https://github.com/water-rs/video-gpu/compare/v0.3.0...v0.3.1) - 2026-09-11
 
 ### Added
 
