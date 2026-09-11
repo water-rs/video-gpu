@@ -31,13 +31,13 @@ multiple_crate_versions = "allow"
 [dependencies]
 async-channel = "2.5"
 futures-timer = "3"
-waterui-video = { version = "0.3.0", git = "https://github.com/water-rs/waterui.git", branch = "dev" }
-waterui-core = { version = "0.3.0", git = "https://github.com/water-rs/waterui.git", branch = "dev" }
-waterui-layout = { version = "0.3.0", git = "https://github.com/water-rs/waterui.git", branch = "dev" }
-waterui-controls = { version = "0.3.0", git = "https://github.com/water-rs/waterui.git", branch = "dev" }
-waterui-graphics = { version = "0.3.0", git = "https://github.com/water-rs/waterui.git", branch = "dev", features = ["gpu"] }
+waterui-video = { version = "0.3.0" }
+waterui-core = { version = "0.3.0" }
+waterui-layout = { version = "0.3.0" }
+waterui-controls = { version = "0.3.0" }
+waterui-graphics = { version = "0.4.0", features = ["gpu"] }
 shaderloom = "0.1.0"
-waterui-text = { version = "0.3.0", git = "https://github.com/water-rs/waterui.git", branch = "dev" }
+waterui-text = { version = "0.4.0" }
 waterkit-video = { version = "0.1.0", git = "https://github.com/water-rs/waterkit.git", branch = "dev", features = ["streaming"] }
 waterkit-codec = { version = "0.1.0", git = "https://github.com/water-rs/waterkit.git", branch = "dev", features = ["software-fallback"] }
 waterkit-audio = { version = "0.1.0", git = "https://github.com/water-rs/waterkit.git", branch = "dev", features = ["streaming"] }
@@ -67,7 +67,7 @@ uuid = { version = "1.26.0", features = ["js"] }
 hydrolysis-m3 = { git = "https://github.com/water-rs/waterui.git", branch = "dev" }
 pollster = "1.0"
 waterui = { git = "https://github.com/water-rs/waterui.git", branch = "dev", features = ["video-gpu"] }
-waterui-testing = { git = "https://github.com/water-rs/waterui.git", branch = "dev" }
+waterui-testing = "0.4.0"
 
 [package.metadata.cargo-machete]
 ignored = ["shaderloom"]
