@@ -1,6 +1,6 @@
 [package]
 name = "waterui-video-gpu"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.95"
 authors = ["Lexo Liu <me@lexo.cool>"]
@@ -31,6 +31,12 @@ multiple_crate_versions = "allow"
 [dependencies]
 async-channel = "2.5"
 futures-timer = "3"
+# Requirement strings stay satisfied by the pinned sources: at the pinned rev
+# the monorepo still carries its pre-release versions (release-plz moves the
+# version group to 0.5.0 when the release runs), and a git patch cannot satisfy
+# a requirement its manifest does not carry. The requirements move to the wave
+# versions ("0.5.0") in the same commit that drops the pins once 0.5.0 is on
+# crates.io — the pattern this repository used for the 0.4 wave (97fc549).
 waterui-video = { version = "0.3.2" }
 waterui-core = { version = "0.3.2" }
 waterui-layout = { version = "0.3.2" }
@@ -72,15 +78,50 @@ waterui-testing = "0.4.1"
 [package.metadata.cargo-machete]
 ignored = ["shaderloom"]
 
-# The WaterUI packages above come from crates.io, so this repository builds
-# against the same released APIs its users get. The third-party pins below are
-# the framework's own: the published `waterui-graphics` was built with these
-# forks, and dropping them here would render this crate's tests through
-# different code than the framework runs.
+# Until waterui 0.5.0 is on crates.io the framework is consumed by git revision
+# pin: one entry per waterui-* crate this graph resolves, all at the
+# release-candidate revision. Wave satellites are pinned at their dev HEAD while
+# their own adoption PRs land. The third-party pins below are the framework's
+# own: git dependencies do not carry their patch table, so the crates the pinned
+# framework builds against are repeated here.
 [patch.crates-io]
-# The published `waterui`'s `video-gpu` feature requires `waterui-video-gpu`;
-# resolving it to this crate keeps one video realization in the test graph.
+# The `waterui` facade's `video-gpu` feature requires `waterui-video-gpu` and
+# `waterui-internal` at the pinned rev still asks for `^0.3.1`, so that edge
+# resolves to the published 0.3.1 for the rest of the pin window while this
+# crate is already named 0.4.0. The duplicate is confined to the test graph and
+# disappears when the framework's requirement moves to 0.4.0 at release.
 waterui-video-gpu = { path = "." }
+waterui = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-assets = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-assets-core = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-assets-macros = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-backend-core = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-controls = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-core = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-form = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-graphics = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-icon = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-inspector-protocol = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-internal = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-layout = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-locale = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-macros = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-map = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-media = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-navigation = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-preview-protocol = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-shape = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-testing = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-text = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-url = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-video = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-watcher-set = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+waterui-webview = { git = "https://github.com/water-rs/waterui", rev = "8a5c93a4f571db43713c26710336cc3b098d91f1" }
+# Same-wave satellites at their dev HEAD: the registry releases predate the
+# proposal-aware placement contract and stop compiling against the pinned
+# framework, exactly as the framework's own patch table documents.
+hydrolysis = { git = "https://github.com/water-rs/hydrolysis", rev = "46954be95bded9534f2f7c15bc50a8b2df777f7b" }
+hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", rev = "0e1e95ab4b2b1c70edcef8df50abc9642249eede" }
 xcb = { git = "https://github.com/rust-x-bindings/rust-xcb", rev = "ae3b2cd080e78173223038ccbebdc644eaf4a9ad" }
 vello = { git = "https://github.com/lexoliu/vello", rev = "5e5f538556be16527f67379b105af82f408b747d" }
 vello_hybrid = { git = "https://github.com/lexoliu/vello", rev = "d68d9e9825bcd1ffee762323881c13a2e7a3f639" }
