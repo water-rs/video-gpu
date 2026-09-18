@@ -5311,21 +5311,16 @@ impl VideoRenderer {
         self.maybe_finish_exhausted_playback(should_play, Instant::now());
     }
 
+    /// Clears the surface to black and, once a frame has been decoded, draws
+    /// the current frame's textured quad. The clear always runs: a player
+    /// that has not produced a frame yet presents the same black surface a
+    /// platform video view does — the alternative is whatever the backend
+    /// shows through an untouched target — so only the quad waits on the
+    /// decoded `bind_group`.
     fn render_surface(&mut self, frame: &GpuFrame) {
         self.ensure_vertex_buffer(frame.device, frame.width, frame.height);
         self.upload_color_uniform_if_needed(frame.queue);
         self.upload_spherical_projection_uniform_if_needed(frame.queue, frame.width, frame.height);
-
-        let Some(pipeline) = self.render_pipeline.as_ref() else {
-            return;
-        };
-        let Some(bind_group) = self.bind_group.as_ref() else {
-            return;
-        };
-        let Some(vertex_buffer) = self.vertex_buffer.as_ref() else {
-            return;
-        };
-        let spherical_bind_group = self.spherical_bind_group.as_ref();
 
         let mut encoder = frame
             .device
@@ -5350,13 +5345,19 @@ impl VideoRenderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            if let Some(spherical_bind_group) = spherical_bind_group {
-                pass.set_bind_group(1, spherical_bind_group, &[]);
+            if let (Some(pipeline), Some(bind_group), Some(vertex_buffer)) = (
+                self.render_pipeline.as_ref(),
+                self.bind_group.as_ref(),
+                self.vertex_buffer.as_ref(),
+            ) {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                if let Some(spherical_bind_group) = self.spherical_bind_group.as_ref() {
+                    pass.set_bind_group(1, spherical_bind_group, &[]);
+                }
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                pass.draw(0..6, 0..1);
             }
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.draw(0..6, 0..1);
         }
 
         frame.queue.submit([encoder.finish()]);
