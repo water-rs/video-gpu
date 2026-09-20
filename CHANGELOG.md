@@ -4,6 +4,25 @@ All notable changes to `waterui-video-gpu` are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/water-rs/video-gpu/compare/v0.3.1...v0.4.0) - 2026-09-20
+
+### Fixed
+
+- *(render)* clear to black before the first decoded frame
+
+### Other
+
+- adopt the 0.5.0 framework wave (0.4.0) ([#26](https://github.com/water-rs/video-gpu/pull/26))
+- publish on the main push, not under workflow_run ([#25](https://github.com/water-rs/video-gpu/pull/25))
+- pin the framework at f3f58c48f (0.5.0 release candidate)
+- let the PR source gate accept release-plz release branches ([#21](https://github.com/water-rs/video-gpu/pull/21))
+- adopt waterui 0.5.0 and name waterui-video-gpu 0.4.0
+- disable incremental builds and trim debuginfo ([#19](https://github.com/water-rs/video-gpu/pull/19))
+- run tests with cargo nextest ([#18](https://github.com/water-rs/video-gpu/pull/18))
+- consume the framework from crates.io
+- publish to crates.io via OIDC trusted publishing ([#14](https://github.com/water-rs/video-gpu/pull/14))
+- gate pull requests into main so only dev may merge ([#15](https://github.com/water-rs/video-gpu/pull/15))
+
 ## [0.3.1](https://github.com/water-rs/video-gpu/compare/v0.3.0...v0.3.1) - 2026-09-11
 
 ### Added
