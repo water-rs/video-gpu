@@ -72,7 +72,7 @@ uuid = { version = "1.26.0", features = ["js"] }
 [dev-dependencies]
 hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", rev = "38499ef90b0a9e0d3b413fa78350325e88e21044" }
 pollster = "1.0"
-waterui = { git = "https://github.com/water-rs/waterui", rev = "b25438ae309d69c8a91c6ecc2580723ed1dd792b", features = ["video-gpu"]}
+waterui = { git = "https://github.com/water-rs/waterui", rev = "b25438ae309d69c8a91c6ecc2580723ed1dd792b", features = ["video-gpu"] }
 waterui-testing = { git = "https://github.com/water-rs/waterui", rev = "b25438ae309d69c8a91c6ecc2580723ed1dd792b" }
 
 [package.metadata.cargo-machete]

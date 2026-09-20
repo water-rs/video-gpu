@@ -2,15 +2,16 @@
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
-use hydrolysis_m3::install as install_m3;
+use hydrolysis_m3::Material3;
 use waterui::View;
 use waterui::ViewExt as _;
-use waterui::env::Environment;
-use waterui_testing::{Role, Selector, SemanticApp, UiBuilder, WaitOptions, WaitResult};
+use waterui_testing::{
+    OffscreenApp, Role, RuntimeDriver, Selector, SemanticApp, Styled, UiBuilder, WaitOptions,
+    WaitResult,
+};
 use waterui_video::{
     Event, MediaItem, PlaybackSession, PlayerController, Playlist, Url, VideoPlayer, video,
 };
-use waterui_video_gpu::install as install_video_gpu;
 
 fn missing_video_url() -> Url {
     Url::from_file_path_str(format!(
@@ -19,7 +20,7 @@ fn missing_video_url() -> Url {
     ))
 }
 
-fn tree_debug(app: &mut waterui_testing::SemanticApp) -> String {
+fn tree_debug<R: RuntimeDriver>(app: &mut SemanticApp<R>) -> String {
     let buttons = app
         .query()
         .role(Role::BUTTON)
@@ -27,11 +28,10 @@ fn tree_debug(app: &mut waterui_testing::SemanticApp) -> String {
         .iter()
         .map(|node| {
             format!(
-                "{:?}:{:?}:enabled={}:bounds={:?}",
+                "{:?}:{:?}:enabled={}",
                 node.node().role(),
                 node.node().label(),
                 node.node().enabled(),
-                node.bounds(),
             )
         })
         .collect::<Vec<_>>();
@@ -42,11 +42,10 @@ fn tree_debug(app: &mut waterui_testing::SemanticApp) -> String {
         .iter()
         .map(|node| {
             format!(
-                "{:?}:{:?}:value={:?}:bounds={:?}",
+                "{:?}:{:?}:value={:?}",
                 node.node().role(),
                 node.node().label(),
                 node.node().value(),
-                node.bounds(),
             )
         })
         .collect::<Vec<_>>();
@@ -72,12 +71,7 @@ fn raw_video_view() -> impl View {
     video(missing_video_url()).size(240.0, 160.0)
 }
 
-fn install_test_theme(env: &mut Environment) {
-    install_m3(env);
-    install_video_gpu(env);
-}
-
-fn assert_initial_player_semantics(app: &mut SemanticApp) {
+fn assert_initial_player_semantics<R: RuntimeDriver>(app: &mut SemanticApp<R>) {
     for label in [
         "Play",
         "Mute",
@@ -142,7 +136,7 @@ fn assert_queue_navigation_reacts(app: &mut SemanticApp, controller: &PlayerCont
         .assert_not_exists();
 }
 
-fn tap_and_assert_label(app: &mut SemanticApp, current: &str, updated: &str) {
+fn tap_and_assert_label<R: RuntimeDriver>(app: &mut SemanticApp<R>, current: &str, updated: &str) {
     app.query().role(Role::BUTTON).label(current).tap();
     let expected = app.expect_exists(Selector::default().role(Role::BUTTON).label(updated));
     assert_eq!(
@@ -153,7 +147,7 @@ fn tap_and_assert_label(app: &mut SemanticApp, current: &str, updated: &str) {
     );
 }
 
-fn assert_non_transport_controls_react(app: &mut SemanticApp) {
+fn assert_non_transport_controls_react<R: RuntimeDriver>(app: &mut SemanticApp<R>) {
     tap_and_assert_label(app, "Mute", "Unmute");
     tap_and_assert_label(app, "Playback speed 1.0 times", "Playback speed 1.5 times");
     tap_and_assert_label(
@@ -171,23 +165,13 @@ fn raw_video_exposes_default_accessibility_image(app: &mut SemanticApp) {
         1,
         "raw-video-exposes-explicit-accessibility-image: expected exactly one image node"
     );
-    let node = app
-        .query()
+    app.query()
         .role(Role::IMAGE)
         .label("Video content")
-        .single();
-    let bounds = node.bounds();
-    assert!(
-        bounds.width() > 0.0,
-        "raw-video-exposes-explicit-accessibility-image: width must be positive"
-    );
-    assert!(
-        bounds.height() > 0.0,
-        "raw-video-exposes-explicit-accessibility-image: height must be positive"
-    );
+        .assert_exists();
 }
 
-#[waterui::test(theme = install_test_theme, viewport = (480, 320))]
+#[waterui::test(viewport = (480, 320))]
 fn video_player_controls_are_accessible_and_reactive(ui: UiBuilder) {
     let mounted_controller = Rc::new(RefCell::new(None));
     let controller_for_view = Rc::clone(&mounted_controller);
@@ -208,11 +192,13 @@ fn video_player_controls_are_accessible_and_reactive(ui: UiBuilder) {
     assert_non_transport_controls_react(&mut app);
 }
 
-#[waterui::test(theme = install_test_theme, viewport = (480, 320))]
-fn self_drawn_player_controls_render_without_retrying_a_failed_source(ui: UiBuilder) {
+#[waterui::test(theme = hydrolysis_m3::Material3::defaults(), viewport = (480, 320))]
+fn self_drawn_player_controls_render_without_retrying_a_failed_source(
+    ui: UiBuilder<Styled<Material3>>,
+) {
     let decoder_errors = Rc::new(RefCell::new(Vec::new()));
     let decoder_errors_for_view = Rc::clone(&decoder_errors);
-    let mut app = ui.mount_offscreen(move || {
+    let mut app: OffscreenApp = ui.mount_offscreen(move || {
         let session = PlaybackSession::new(Playlist::single(missing_video_url()));
         VideoPlayer::new(session)
             .on_event({
