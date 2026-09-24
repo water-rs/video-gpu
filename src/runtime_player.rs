@@ -4820,7 +4820,8 @@ impl VideoRenderer {
         }
         self.last_handled_seek_generation = Some(generation);
 
-        let requested = Duration::from_secs_f64(self.playback.seek_target_seconds.snapshot().max(0.0));
+        let requested =
+            Duration::from_secs_f64(self.playback.seek_target_seconds.snapshot().max(0.0));
         if requested.abs_diff(self.playback_position(Instant::now())) <= SEEK_POSITION_EPSILON {
             self.pending_seek_request = None;
             return;
