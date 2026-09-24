@@ -1990,7 +1990,7 @@ impl fmt::Debug for VideoSurface {
 impl View for VideoSurface {
     fn body(self, _env: &Environment) -> impl View {
         let surface = GpuSurface::new(self.renderer)
-            .picture_in_picture_host_id(self.picture_in_picture_host_id.snapshot());
+            .picture_in_picture_host_id(self.picture_in_picture_host_id.get());
         #[cfg(target_os = "android")]
         let surface = AndroidVideoSurfaceHost::new(surface, self.android_surface_bridge);
         IgnorableMetadata::new(
@@ -2293,7 +2293,7 @@ impl PresentedFrameHistory {
 impl InitialPlaybackState {
     fn read(config: &VideoSurfaceConfig) -> Self {
         Self {
-            item: waterui_core::Signal::get(&config.source),
+            item: waterui_core::Signal::snapshot(&config.source),
             play_requested: config.playback.desired_playing.snapshot(),
             playback_rate: clamp_playback_rate(config.playback_rate.snapshot()),
             subtitle_selection: config.subtitle_selection.snapshot(),
@@ -2959,7 +2959,7 @@ impl VideoRenderer {
     }
 
     fn reconcile_source(&mut self) {
-        let item = waterui_core::Signal::get(&self.source_signal);
+        let item = waterui_core::Signal::snapshot(&self.source_signal);
         assert!(
             !self.projection.is_spherical() || item.drm.is_none(),
             "spherical projection cannot sample a platform-protected video surface"
