@@ -13,7 +13,7 @@ use std::{
 };
 
 use executor_core::spawn_local;
-use nami::{Computed, collection::SignalCollection, watcher::BoxWatcherGuard};
+use nami::{Computed, Signal, collection::SignalCollection, watcher::BoxWatcherGuard};
 use num_traits::ToPrimitive;
 use uuid::Uuid;
 use waterkit_audio::{
@@ -362,8 +362,8 @@ impl PlayerBindings {
             move |display, requested: f64| {
                 let clamped = requested.clamp(0.0, 1.0);
                 display.set(clamped);
-                let target = live_window.get().map_or_else(
-                    || duration_seconds.get().max(0.0) * clamped,
+                let target = live_window.snapshot().map_or_else(
+                    || duration_seconds.snapshot().max(0.0) * clamped,
                     |window| {
                         let start = window.seekable_start().as_secs_f64();
                         let span = window
@@ -374,7 +374,7 @@ impl PlayerBindings {
                     },
                 );
                 seek_target_seconds.set(target);
-                seek_generation.set(seek_generation.get().wrapping_add(1));
+                seek_generation.with_mut(|generation| *generation = generation.wrapping_add(1));
             },
         )
     }
@@ -465,7 +465,7 @@ fn apply_ui_update(
     match update {
         UiUpdate::Event(event) => {
             let phase = match &event {
-                Event::ReadyToPlay => Some(if playback.desired_playing.get() {
+                Event::ReadyToPlay => Some(if playback.desired_playing.snapshot() {
                     PlaybackPhase::Playing
                 } else {
                     PlaybackPhase::Ready
@@ -473,7 +473,7 @@ fn apply_ui_update(
                 Event::Ended => Some(PlaybackPhase::Ended),
                 Event::Error { .. } => Some(PlaybackPhase::Failed),
                 Event::Buffering => Some(PlaybackPhase::Buffering),
-                Event::BufferingEnded => Some(if playback.desired_playing.get() {
+                Event::BufferingEnded => Some(if playback.desired_playing.snapshot() {
                     PlaybackPhase::Playing
                 } else {
                     PlaybackPhase::Paused
@@ -548,7 +548,7 @@ fn apply_track_catalog_update(
 ) -> Option<UiUpdate> {
     match update {
         UiUpdate::AudioTracks(value) => {
-            track_catalog.set(track_catalog.get().replacing_audio(value.clone()));
+            track_catalog.with_mut(|catalog| *catalog = catalog.replacing_audio(value.clone()));
             if let Some(player) = player {
                 player
                     .audio_track_labels
@@ -557,7 +557,7 @@ fn apply_track_catalog_update(
             None
         }
         UiUpdate::VideoTracks(value) => {
-            track_catalog.set(track_catalog.get().replacing_video(value.clone()));
+            track_catalog.with_mut(|catalog| *catalog = catalog.replacing_video(value.clone()));
             if let Some(player) = player {
                 player
                     .video_track_labels
@@ -566,7 +566,7 @@ fn apply_track_catalog_update(
             None
         }
         UiUpdate::SubtitleTracks(value) => {
-            track_catalog.set(track_catalog.get().replacing_subtitles(value.clone()));
+            track_catalog.with_mut(|catalog| *catalog = catalog.replacing_subtitles(value.clone()));
             if let Some(subtitle) = subtitle {
                 subtitle
                     .track_labels
@@ -670,7 +670,7 @@ fn prepare_runtime_source(
     track_catalog: &Binding<TrackCatalog>,
 ) -> (Computed<RuntimeMediaItem>, SubtitleBindings) {
     let source = runtime_media_item_signal(source);
-    let item = waterui_core::Signal::get(&source);
+    let item = waterui_core::Signal::snapshot(&source);
     let subtitle = initial_subtitle_bindings(&item, track_catalog);
     (source, subtitle)
 }
@@ -909,7 +909,7 @@ fn initial_subtitle_bindings(
     track_catalog: &Binding<TrackCatalog>,
 ) -> SubtitleBindings {
     let tracks = runtime_subtitle_track_info(&item.subtitle_tracks);
-    track_catalog.set(track_catalog.get().replacing_subtitles(tracks.clone()));
+    track_catalog.with_mut(|catalog| *catalog = catalog.replacing_subtitles(tracks.clone()));
     SubtitleBindings {
         text: binding(String::new()),
         track_labels: binding(subtitle_track_info_labels(&tracks)),
@@ -1403,7 +1403,7 @@ fn picture_in_picture_button(request: &Binding<u64>) -> impl View + use<> {
             button("PiP")
                 .accessibility_label("Enter picture in picture")
                 .action(|State(request): State<Binding<u64>>| {
-                    request.set(request.get().wrapping_add(1));
+                    request.with_mut(|request| *request = request.wrapping_add(1));
                 }),
             State(request.clone()),
         )
@@ -1497,7 +1497,7 @@ fn audio_track_toggle(
             .action(
                 |State(selection): State<Binding<AudioTrackSelection>>,
                  State(labels): State<Binding<Vec<String>>>| {
-                    let next = next_audio_selection(&labels.get(), selection.get())
+                    let next = next_audio_selection(&labels.snapshot(), selection.snapshot())
                         .expect("audio selection state must resolve");
                     selection.set(next);
                 },
@@ -1524,7 +1524,7 @@ fn video_track_toggle(
             .action(
                 |State(selection): State<Binding<VideoTrackSelection>>,
                  State(labels): State<Binding<Vec<String>>>| {
-                    let next = next_video_selection(&labels.get(), selection.get())
+                    let next = next_video_selection(&labels.snapshot(), selection.snapshot())
                         .expect("video selection state must resolve");
                     selection.set(next);
                 },
@@ -1551,7 +1551,7 @@ fn subtitle_track_toggle(
             .action(
                 |State(selection): State<Binding<SubtitleSelection>>,
                  State(labels): State<Binding<Vec<String>>>| {
-                    let next = next_subtitle_selection(&labels.get(), selection.get())
+                    let next = next_subtitle_selection(&labels.snapshot(), selection.snapshot())
                         .expect("subtitle selection state must resolve");
                     selection.set(next);
                 },
@@ -1673,16 +1673,16 @@ fn seek_button(
                 .action(
                     move |State(value): State<Binding<f64>>,
                           State(duration): State<Binding<f64>>| {
-                        let duration = duration.get();
+                        let duration = duration.snapshot();
                         if duration <= f64::EPSILON {
                             return;
                         }
 
                         let delta = (seconds.abs() / duration).min(1.0);
                         let requested = if seconds.is_sign_negative() {
-                            value.get() - delta
+                            value.snapshot() - delta
                         } else {
-                            value.get() + delta
+                            value.snapshot() + delta
                         };
                         value.set(requested.clamp(0.0, 1.0));
                     },
@@ -1700,7 +1700,7 @@ fn play_pause_button(is_playing: Binding<bool>) -> impl View {
                 .clone()
                 .map(|playing| if playing { "Pause" } else { "Play" }),
         ))
-        .action(|State(playing): State<Binding<bool>>| playing.set(!playing.get())),
+        .action(|State(playing): State<Binding<bool>>| playing.toggle()),
         State(is_playing),
     )
 }
@@ -1712,7 +1712,7 @@ fn mute_button(muted: &Binding<bool>) -> impl View + use<> {
             .clone()
             .map(|is_muted| if is_muted { "Unmute" } else { "Mute" }),
     ))
-    .action(move || action_binding.set(!action_binding.get()))
+    .action(move || action_binding.toggle())
 }
 
 fn speed_controls(
@@ -1738,7 +1738,7 @@ fn speed_controls(
             ))
             .accessibility_label(Text::display(playback_rate_label))
             .action(|State(rate): State<Binding<f32>>| {
-                let next = match rate.get() {
+                let next = match rate.snapshot() {
                     current if current < 0.75 => 1.0,
                     current if current < 1.25 => 1.5,
                     current if current < 1.75 => 2.0,
@@ -1757,7 +1757,7 @@ fn speed_controls(
                 ),
             ))
             .accessibility_label(Text::display(preserve_pitch_label))
-            .action(|State(enabled): State<Binding<bool>>| enabled.set(!enabled.get())),
+            .action(|State(enabled): State<Binding<bool>>| enabled.toggle()),
             State(preserve_pitch.clone()),
         ),
     ))
@@ -1893,7 +1893,7 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
                 match event.phase {
                     GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
                     GesturePhase::Updated => {
-                        let start = anchor.get();
+                        let start = anchor.snapshot();
                         viewport.set_orientation(
                             event
                                 .translation
@@ -1913,7 +1913,7 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
                 match event.phase {
                     GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
                     GesturePhase::Updated => {
-                        let start = anchor.get();
+                        let start = anchor.snapshot();
                         viewport.set_vertical_field_of_view_degrees(
                             (start.vertical_field_of_view / event.scale).clamp(30.0, 120.0),
                         );
@@ -1990,7 +1990,7 @@ impl fmt::Debug for VideoSurface {
 impl View for VideoSurface {
     fn body(self, _env: &Environment) -> impl View {
         let surface = GpuSurface::new(self.renderer)
-            .picture_in_picture_host_id(self.picture_in_picture_host_id.get());
+            .picture_in_picture_host_id(self.picture_in_picture_host_id.snapshot());
         #[cfg(target_os = "android")]
         let surface = AndroidVideoSurfaceHost::new(surface, self.android_surface_bridge);
         IgnorableMetadata::new(
@@ -2294,11 +2294,11 @@ impl InitialPlaybackState {
     fn read(config: &VideoSurfaceConfig) -> Self {
         Self {
             item: waterui_core::Signal::get(&config.source),
-            play_requested: config.playback.desired_playing.get(),
-            playback_rate: clamp_playback_rate(config.playback_rate.get()),
-            subtitle_selection: config.subtitle_selection.get(),
-            audio_track_selection: config.audio_track_selection.get(),
-            video_track_selection: config.video_track_selection.get(),
+            play_requested: config.playback.desired_playing.snapshot(),
+            playback_rate: clamp_playback_rate(config.playback_rate.snapshot()),
+            subtitle_selection: config.subtitle_selection.snapshot(),
+            audio_track_selection: config.audio_track_selection.snapshot(),
+            video_track_selection: config.video_track_selection.snapshot(),
         }
     }
 }
@@ -2659,8 +2659,8 @@ impl VideoRenderer {
             !projection.is_spherical() || initial.item.drm.is_none(),
             "spherical projection cannot sample a platform-protected video surface"
         );
-        let initial_step_forward_generation = playback.step_forward_generation.get();
-        let initial_step_backward_generation = playback.step_backward_generation.get();
+        let initial_step_forward_generation = playback.step_forward_generation.snapshot();
+        let initial_step_backward_generation = playback.step_backward_generation.snapshot();
 
         Self {
             picture_in_picture_host_id,
@@ -2992,8 +2992,8 @@ impl VideoRenderer {
         self.pending_frame_step = None;
         self.pending_forward_steps = 0;
         self.pending_backward_steps = 0;
-        self.last_step_forward_generation = self.playback.step_forward_generation.get();
-        self.last_step_backward_generation = self.playback.step_backward_generation.get();
+        self.last_step_forward_generation = self.playback.step_forward_generation.snapshot();
+        self.last_step_backward_generation = self.playback.step_backward_generation.snapshot();
         self.video_dimensions = None;
         self.duration = Duration::ZERO;
         self.live_window = None;
@@ -3020,7 +3020,7 @@ impl VideoRenderer {
         self.playback_anchor_instant = None;
         self.control_flags.seek_inflight = false;
         self.pending_seek_request = None;
-        self.last_handled_seek_generation = Some(self.playback.seek_generation.get());
+        self.last_handled_seek_generation = Some(self.playback.seek_generation.snapshot());
         self.last_reported_progress = 0.0;
         self.color_profile = VideoColorInfo::default();
         self.color_flags.profile_initialized = false;
@@ -3046,7 +3046,7 @@ impl VideoRenderer {
     }
 
     fn reconcile_audio_track_selection(&mut self) {
-        let selection = self.audio_track_selection.get();
+        let selection = self.audio_track_selection.snapshot();
         if selection == self.last_audio_track_selection {
             return;
         }
@@ -3063,7 +3063,7 @@ impl VideoRenderer {
     }
 
     fn reconcile_video_track_selection(&mut self) {
-        let selection = self.video_track_selection.get();
+        let selection = self.video_track_selection.snapshot();
         if selection == self.last_video_track_selection {
             return;
         }
@@ -3090,7 +3090,7 @@ impl VideoRenderer {
     }
 
     fn reconcile_subtitle_track_selection(&mut self) {
-        let selection = self.subtitle_selection.get();
+        let selection = self.subtitle_selection.snapshot();
         if selection == self.last_subtitle_selection {
             return;
         }
@@ -3341,7 +3341,7 @@ impl VideoRenderer {
 
     fn sync_selected_subtitle_track(&mut self) -> Result<(), String> {
         self.ensure_embedded_subtitle_tracks()?;
-        let selection = self.subtitle_selection.get();
+        let selection = self.subtitle_selection.snapshot();
         let next = match resolve_selected_subtitle_index(&self.subtitle_tracks, selection) {
             Ok(next) => next,
             Err(_)
@@ -3575,7 +3575,7 @@ impl VideoRenderer {
         }
         let config = ProgressiveDecoderConfig::new(
             self.audio_output.clone(),
-            self.audio_track_selection.get(),
+            self.audio_track_selection.snapshot(),
             self.playback_policy.network.maximum_prefetch_buffer(),
         );
         #[cfg(target_os = "android")]
@@ -3652,14 +3652,14 @@ impl VideoRenderer {
         let clock = if self.playback_policy.realtime {
             AndroidPlaybackClock::Realtime
         } else {
-            AndroidPlaybackClock::Fixed(self.playback_rate.get())
+            AndroidPlaybackClock::Fixed(self.playback_rate.snapshot())
         };
         let video_access = if self.projection.is_spherical() {
             AndroidVideoAccess::GpuSamplingRequired
         } else {
             AndroidVideoAccess::DirectSurface
         };
-        let audio_processing = if self.skip_silence.get() {
+        let audio_processing = if self.skip_silence.snapshot() {
             AndroidAudioProcessing::SkipSilence
         } else {
             AndroidAudioProcessing::DirectCompressedEligible
@@ -3689,7 +3689,7 @@ impl VideoRenderer {
         self.playback_flags.first_frame_presented = false;
         self.playback_flags.ended_sent = false;
         self.playback_flags.decoder_lifecycle = DecoderLifecycle::Active;
-        self.last_handled_seek_generation = Some(self.playback.seek_generation.get());
+        self.last_handled_seek_generation = Some(self.playback.seek_generation.snapshot());
         self.pending_seek_request = None;
         self.control_flags.seek_inflight = false;
         self.last_seek_restart_at = None;
@@ -3791,7 +3791,7 @@ impl VideoRenderer {
     }
 
     fn reconcile_play_request_from_ui(&mut self) {
-        let ui_playing = self.playback.desired_playing.get();
+        let ui_playing = self.playback.desired_playing.snapshot();
         let user_initiated_change = self.pending_play_request_sync.is_none()
             && ui_playing != self.control_flags.play_requested;
         if let Some(pending) = self.pending_play_request_sync {
@@ -3847,14 +3847,14 @@ impl VideoRenderer {
     }
 
     fn clamp_seek_position(&self, position: Duration) -> Duration {
-        self.playback.live_window.get().map_or_else(
+        self.playback.live_window.snapshot().map_or_else(
             || position.min(self.duration),
             |window| position.clamp(window.seekable_start(), window.seekable_end()),
         )
     }
 
     fn timeline_progress(&self, position: Duration) -> f64 {
-        self.playback.live_window.get().map_or_else(
+        self.playback.live_window.snapshot().map_or_else(
             || progress_for_position(self.duration, position),
             |window| {
                 progress_for_position(
@@ -3869,8 +3869,8 @@ impl VideoRenderer {
 
     fn queue_navigation_controls(&self) -> QueueNavigationControls {
         QueueNavigationControls::disabled()
-            .with_next_enabled(self.has_next.get())
-            .with_previous_enabled(self.has_previous.get())
+            .with_next_enabled(self.has_next.snapshot())
+            .with_previous_enabled(self.has_previous.snapshot())
     }
 
     fn handle_media_command(&mut self, command: &MediaCommand) {
@@ -3900,7 +3900,7 @@ impl VideoRenderer {
                 let start = self
                     .playback
                     .live_window
-                    .get()
+                    .snapshot()
                     .map_or(Duration::ZERO, LiveWindow::seekable_start);
                 self.queue_seek_request(start, true);
             }
@@ -4001,11 +4001,11 @@ impl VideoRenderer {
     }
 
     fn requested_playback_rate(&self) -> f32 {
-        clamp_playback_rate(self.playback_rate.get() * self.live_catch_up_rate)
+        clamp_playback_rate(self.playback_rate.snapshot() * self.live_catch_up_rate)
     }
 
     fn sync_live_catch_up_rate(&mut self, should_play: bool, now: Instant) {
-        let user_rate = clamp_playback_rate(self.playback_rate.get());
+        let user_rate = clamp_playback_rate(self.playback_rate.snapshot());
         if !should_play
             || !self.playback_policy.realtime
             || (user_rate - NORMAL_PLAYBACK_RATE).abs() > 0.001
@@ -4035,7 +4035,7 @@ impl VideoRenderer {
     }
 
     fn requested_preserve_pitch(&self) -> bool {
-        self.preserve_pitch.get()
+        self.preserve_pitch.snapshot()
     }
 
     const fn is_realtime_policy(&self) -> bool {
@@ -4271,8 +4271,8 @@ impl VideoRenderer {
         };
 
         let volume = effective_audio_volume(
-            self.volume.get(),
-            self.muted.get(),
+            self.volume.snapshot(),
+            self.muted.snapshot(),
             self.audio.flags.focus_ducked,
         );
 
@@ -4337,7 +4337,7 @@ impl VideoRenderer {
     }
 
     fn sync_audio_skip_silence(&mut self) {
-        let enabled = self.skip_silence.get();
+        let enabled = self.skip_silence.snapshot();
         let Some(audio) = self.audio.player.as_ref() else {
             return;
         };
@@ -4790,9 +4790,9 @@ impl VideoRenderer {
             self.emit_event(Event::Ended);
             self.playback_flags.ended_sent = true;
         }
-        if self.loops || self.playback.repeat.get() == RepeatMode::One {
+        if self.loops || self.playback.repeat.snapshot() == RepeatMode::One {
             self.loop_decoder_from_start(should_play);
-        } else if self.has_next.get() {
+        } else if self.has_next.snapshot() {
             request_next(&self.controller);
             self.stop_decode_worker();
             self.sync_audio_playback(false);
@@ -4814,13 +4814,13 @@ impl VideoRenderer {
     }
 
     fn maybe_seek_from_ui(&mut self) {
-        let generation = self.playback.seek_generation.get();
+        let generation = self.playback.seek_generation.snapshot();
         if self.last_handled_seek_generation == Some(generation) {
             return;
         }
         self.last_handled_seek_generation = Some(generation);
 
-        let requested = Duration::from_secs_f64(self.playback.seek_target_seconds.get().max(0.0));
+        let requested = Duration::from_secs_f64(self.playback.seek_target_seconds.snapshot().max(0.0));
         if requested.abs_diff(self.playback_position(Instant::now())) <= SEEK_POSITION_EPSILON {
             self.pending_seek_request = None;
             return;
@@ -4830,8 +4830,8 @@ impl VideoRenderer {
     }
 
     fn reconcile_frame_step_requests(&mut self) {
-        let forward_generation = self.playback.step_forward_generation.get();
-        let backward_generation = self.playback.step_backward_generation.get();
+        let forward_generation = self.playback.step_forward_generation.snapshot();
+        let backward_generation = self.playback.step_backward_generation.snapshot();
         self.pending_forward_steps = self
             .pending_forward_steps
             .saturating_add(forward_generation.wrapping_sub(self.last_step_forward_generation));
@@ -4892,7 +4892,7 @@ impl VideoRenderer {
             return;
         };
 
-        let request = player.picture_in_picture_request.get();
+        let request = player.picture_in_picture_request.snapshot();
         if self.last_handled_picture_in_picture_request == Some(request) {
             return;
         }
