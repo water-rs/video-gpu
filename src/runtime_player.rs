@@ -548,7 +548,9 @@ fn apply_track_catalog_update(
 ) -> Option<UiUpdate> {
     match update {
         UiUpdate::AudioTracks(value) => {
-            track_catalog.with_mut(|catalog| *catalog = catalog.replacing_audio(value.clone()));
+            track_catalog.with_mut(|catalog| {
+                *catalog = std::mem::take(catalog).replacing_audio(value.clone());
+            });
             if let Some(player) = player {
                 player
                     .audio_track_labels
@@ -557,7 +559,9 @@ fn apply_track_catalog_update(
             None
         }
         UiUpdate::VideoTracks(value) => {
-            track_catalog.with_mut(|catalog| *catalog = catalog.replacing_video(value.clone()));
+            track_catalog.with_mut(|catalog| {
+                *catalog = std::mem::take(catalog).replacing_video(value.clone());
+            });
             if let Some(player) = player {
                 player
                     .video_track_labels
@@ -566,7 +570,9 @@ fn apply_track_catalog_update(
             None
         }
         UiUpdate::SubtitleTracks(value) => {
-            track_catalog.with_mut(|catalog| *catalog = catalog.replacing_subtitles(value.clone()));
+            track_catalog.with_mut(|catalog| {
+                *catalog = std::mem::take(catalog).replacing_subtitles(value.clone());
+            });
             if let Some(subtitle) = subtitle {
                 subtitle
                     .track_labels
@@ -909,7 +915,9 @@ fn initial_subtitle_bindings(
     track_catalog: &Binding<TrackCatalog>,
 ) -> SubtitleBindings {
     let tracks = runtime_subtitle_track_info(&item.subtitle_tracks);
-    track_catalog.with_mut(|catalog| *catalog = catalog.replacing_subtitles(tracks.clone()));
+    track_catalog.with_mut(|catalog| {
+        *catalog = std::mem::take(catalog).replacing_subtitles(tracks.clone());
+    });
     SubtitleBindings {
         text: binding(String::new()),
         track_labels: binding(subtitle_track_info_labels(&tracks)),
