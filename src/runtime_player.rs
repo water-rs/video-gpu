@@ -1694,7 +1694,9 @@ fn play_pause_button(is_playing: Binding<bool>) -> impl View {
                 .clone()
                 .map(|playing| if playing { "Pause" } else { "Play" }),
         ))
-        .action(|State(playing): State<Binding<bool>>| playing.toggle()),
+        .action(|State(playing): State<Binding<bool>>| {
+            playing.toggle();
+        }),
         State(is_playing),
     )
 }
@@ -3938,7 +3940,8 @@ impl VideoRenderer {
     }
 
     fn should_open_decode_worker(&self) -> bool {
-        self.playback_flags.decoder_lifecycle != DecoderLifecycle::Failed
+        self.can_present()
+            && self.playback_flags.decoder_lifecycle != DecoderLifecycle::Failed
             && (self.source_path.is_none()
                 || self.control_flags.play_requested
                 || self.pending_seek_request.is_some())
@@ -6541,7 +6544,7 @@ mod tests {
                 frame: decoded,
             });
         }
-        let content = VideoWarpContent {
+        let warp_content = VideoWarpContent {
             inbox,
             pipeline: None,
             sampler: None,
@@ -6551,7 +6554,7 @@ mod tests {
             frame: None,
             presented_serial: 0,
         };
-        let mut view = waterui_graphics::GpuContentView::new(content);
+        let mut view = waterui_graphics::GpuContentView::new(warp_content);
         let boxed = view.take_engine_content(|| {});
         let mut renderer = GpuContentRenderer::new(runtime, boxed, visual_size());
         let target = host_target(device);
@@ -6573,7 +6576,7 @@ mod tests {
         status.status.success().then_some(path)
     }
 
-    /// Mid-playback frames of real decodes: VideoToolbox imports on the
+    /// Mid-playback frames of real decodes: `VideoToolbox` imports on the
     /// external-frame path, end to end.
     #[test]
     #[cfg(target_os = "macos")]
@@ -6695,11 +6698,11 @@ mod tests {
     fn fill_crop_letterboxes_neither_axis() {
         // Wide surface over 16:9 video: crop top and bottom.
         let crop = fill_crop((1920, 1080), (2000, 500));
-        assert_eq!(crop[0], 0.0);
+        assert!(crop[0].abs() < f32::EPSILON);
         assert!((crop[3] - 4.0 / 9.0).abs() < 1e-6);
         // Tall surface: crop left and right.
         let crop = fill_crop((1920, 1080), (500, 2000));
-        assert_eq!(crop[1], 0.0);
+        assert!(crop[1].abs() < f32::EPSILON);
         assert!((crop[2] - 9.0 / 64.0).abs() < 1e-6);
     }
 
