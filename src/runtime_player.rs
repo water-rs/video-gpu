@@ -1,4 +1,5 @@
 use async_channel::{Receiver as AsyncReceiver, Sender as AsyncSender};
+use core::cell::{Cell, RefCell};
 use core::fmt;
 use futures::FutureExt as _;
 use std::{
@@ -7,11 +8,15 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, TryRecvError},
+    },
     thread,
     time::{Duration, Instant},
 };
 
+use crate::SPHERICAL_VIDEO_SHADER;
 use executor_core::spawn_local;
 use nami::{Computed, Signal, collection::SignalCollection, watcher::BoxWatcherGuard};
 use num_traits::ToPrimitive;
@@ -20,10 +25,7 @@ use waterkit_audio::{
     AudioOutput, MediaCommand, MediaMetadata, MediaSession, PlaybackState, QueueNavigationControls,
     StreamingAudioPlayer,
 };
-use waterkit_codec::{
-    ColorOutputTarget, DecodedFrame, DecodedFrameUploader, DecodedPixelLayout,
-    GpuFrame as DecodedGpuFrame, VideoColorUniform, video_color_uniform,
-};
+use waterkit_codec::{DecodedFrameUploader, GpuFrame as DecodedGpuFrame, LinearRgbaConverter};
 use waterkit_fs::WaterFs;
 #[cfg(target_os = "android")]
 use waterkit_video::AndroidOffloadAudioController;
@@ -32,14 +34,14 @@ use waterkit_video::streaming::{
     download,
 };
 use waterkit_video::{
-    DecodedVideoFrame as EngineDecodedVideoFrame,
+    ColorPrimaries, ColorRange, DecodedVideoFrame as EngineDecodedVideoFrame,
     EmbeddedSubtitleTrack as EmbeddedSubtitleSourceTrack,
     LivePlaybackRateRange as EngineLivePlaybackRateRange, LiveWindow as EngineLiveWindow,
-    PictureInPictureCommand, PictureInPictureCommandStream, PictureInPictureController,
-    PictureInPictureControllerState, PictureInPictureHostId, SelectableAudioTrack,
-    SelectableSubtitleTrack, SelectableVideoTrack, SubtitleCue,
+    MatrixCoefficients, PictureInPictureCommand, PictureInPictureCommandStream,
+    PictureInPictureController, PictureInPictureControllerState, PictureInPictureHostId,
+    SelectableAudioTrack, SelectableSubtitleTrack, SelectableVideoTrack, SubtitleCue,
     SubtitleTrackSelection as EngineSubtitleTrackSelection, TimedMetadata as EngineTimedMetadata,
-    VideoColorInfo, VideoReader, active_subtitle_text, embedded_subtitle_tracks,
+    TransferFunction, VideoColorInfo, VideoReader, active_subtitle_text, embedded_subtitle_tracks,
     parse_subtitles_from_path, read_embedded_subtitle_cues,
 };
 use waterui_controls::{button, slider::slider};
@@ -53,9 +55,16 @@ use waterui_core::{
         MagnificationGesture,
     },
     id::SelfId,
-    layout::{ProposalSize, Size, StretchAxis, ViewDimensions},
+    layout::{ProposalSize, Size, ViewDimensions},
 };
-use waterui_graphics::{Color, GpuContext, GpuFrame, GpuSurface, GpuView, RedrawHandle};
+use waterui_graphics::cherenkov_gpu::interop::{
+    ChromaSiting, ExternalFrame, FrameColor, Primaries, RgbAlpha, Transfer, YuvMatrix, YuvRange,
+};
+use waterui_graphics::gpu::RetiredOutput;
+use waterui_graphics::{
+    Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
+    Frame as GpuContentFrame, FrameOutput, GpuContent, GpuContentView, RedrawHandle,
+};
 use waterui_layout::{
     frame::Frame,
     overlay,
@@ -106,6 +115,13 @@ const AUDIO_FOCUS_DUCK_FACTOR: f32 = 0.2;
 const METRICS_REPORT_INTERVAL: Duration = Duration::from_millis(500);
 const BUFFER_LEVEL_REPORT_STEP_MS: u32 = 50;
 const SPHERICAL_GESTURE_DEGREES_PER_POINT: f32 = 0.2;
+/// Pump cadence while a decode worker or source download is active.
+const PUMP_ACTIVE_INTERVAL_MS: u64 = 16;
+/// Pump cadence when nothing is pending: playback bookkeeping stays
+/// responsive without burning the UI thread.
+const PUMP_IDLE_INTERVAL_MS: u64 = 120;
+/// Upper bound for the wait before a due video frame is presented.
+const PUMP_PENDING_FRAME_CAP_MS: u64 = 50;
 type OnEvent = Option<Rc<dyn Fn(Event) + 'static>>;
 
 /// Bridges an optional typed [`BoxedEventAction<Event>`] to the runtime player's
@@ -144,10 +160,6 @@ fn u64_to_usize(value: u64, name: &str) -> usize {
     usize::try_from(value).unwrap_or_else(|_| panic!("{name} must fit into usize"))
 }
 
-fn usize_to_u64(value: usize, name: &str) -> u64 {
-    u64::try_from(value).unwrap_or_else(|_| panic!("{name} must fit into u64"))
-}
-
 fn f64_to_f32(value: f64, name: &str) -> f32 {
     value
         .to_f32()
@@ -164,23 +176,6 @@ fn downloaded_len(path: &Path) -> usize {
     fs::metadata(path)
         .ok()
         .map_or(0, |meta| u64_to_usize(meta.len(), "downloaded file length"))
-}
-
-fn shader_target_mode(format: wgpu::TextureFormat, source_is_hdr: bool) -> ColorOutputTarget {
-    if matches!(
-        format,
-        wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
-    ) {
-        if source_is_hdr {
-            ColorOutputTarget::LinearHdr
-        } else {
-            ColorOutputTarget::LinearSdr
-        }
-    } else if format.is_srgb() {
-        ColorOutputTarget::LinearSdr
-    } else {
-        ColorOutputTarget::GammaSdr
-    }
 }
 
 fn playback_clock_position(
@@ -627,15 +622,6 @@ fn start_ui_update_pump(
         }
     })
     .detach();
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct VertexLayoutKey {
-    surface_width: u32,
-    surface_height: u32,
-    video_width: u32,
-    video_height: u32,
-    content_mode: ContentMode,
 }
 
 #[derive(Debug)]
@@ -1830,47 +1816,6 @@ fn new_picture_in_picture_host_id() -> PictureInPictureHostId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct SphericalProjectionUniform {
-    yaw_radians: f32,
-    pitch_radians: f32,
-    vertical_field_of_view_radians: f32,
-    stereo_layout: u32,
-    surface_aspect_ratio: f32,
-}
-
-impl SphericalProjectionUniform {
-    fn read(
-        projection: &EquirectangularProjection,
-        surface_width: u32,
-        surface_height: u32,
-    ) -> Self {
-        let viewport = projection.viewport();
-        Self {
-            yaw_radians: viewport.yaw_degrees().to_radians(),
-            pitch_radians: viewport.pitch_degrees().to_radians(),
-            vertical_field_of_view_radians: viewport.vertical_field_of_view_degrees().to_radians(),
-            stereo_layout: match projection.layout() {
-                SphericalStereoLayout::Mono => 0,
-                SphericalStereoLayout::TopBottom => 1,
-                SphericalStereoLayout::LeftRight => 2,
-            },
-            surface_aspect_ratio: u32_to_f32(surface_width.max(1), "spherical surface width")
-                / u32_to_f32(surface_height.max(1), "spherical surface height"),
-        }
-    }
-
-    fn to_bytes(self) -> [u8; 32] {
-        let mut bytes = [0_u8; 32];
-        bytes[0..4].copy_from_slice(&self.yaw_radians.to_ne_bytes());
-        bytes[4..8].copy_from_slice(&self.pitch_radians.to_ne_bytes());
-        bytes[8..12].copy_from_slice(&self.vertical_field_of_view_radians.to_ne_bytes());
-        bytes[12..16].copy_from_slice(&self.stereo_layout.to_ne_bytes());
-        bytes[16..20].copy_from_slice(&self.surface_aspect_ratio.to_ne_bytes());
-        bytes
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
 struct SphericalGestureAnchor {
     yaw: f32,
     pitch: f32,
@@ -1934,8 +1879,7 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
 }
 
 struct VideoSurface {
-    picture_in_picture_host_id: PictureInPictureHostId,
-    renderer: VideoRenderer,
+    renderer: Rc<RefCell<VideoRenderer>>,
     #[cfg(target_os = "android")]
     android_surface_bridge: AndroidVideoSurfaceBridge,
 }
@@ -1969,22 +1913,23 @@ impl VideoSurface {
     fn new(config: VideoSurfaceConfig) -> Self {
         let picture_in_picture_host_id = new_picture_in_picture_host_id();
         #[cfg(target_os = "android")]
-        {
-            let (android_surface_bridge, video_surface_receiver) = video_surface_channel();
-            Self {
-                picture_in_picture_host_id,
-                renderer: VideoRenderer::new(
-                    picture_in_picture_host_id,
-                    config,
-                    video_surface_receiver,
-                ),
-                android_surface_bridge,
-            }
-        }
+        let (android_surface_bridge, video_surface_receiver) = video_surface_channel();
+        #[cfg(target_os = "android")]
+        let renderer =
+            VideoRenderer::new(picture_in_picture_host_id, config, video_surface_receiver);
         #[cfg(not(target_os = "android"))]
+        let renderer = VideoRenderer::new(picture_in_picture_host_id, config);
+        let renderer = Rc::new(RefCell::new(renderer));
+        {
+            let mut renderer = renderer.borrow_mut();
+            renderer.install_spherical_projection_watchers();
+            renderer.ensure_picture_in_picture_command_poller();
+        }
+        VideoRenderer::install_pump(&renderer);
         Self {
-            picture_in_picture_host_id,
-            renderer: VideoRenderer::new(picture_in_picture_host_id, config),
+            renderer,
+            #[cfg(target_os = "android")]
+            android_surface_bridge,
         }
     }
 }
@@ -1997,10 +1942,36 @@ impl fmt::Debug for VideoSurface {
 
 impl View for VideoSurface {
     fn body(self, _env: &Environment) -> impl View {
-        let surface = GpuSurface::new(self.renderer)
-            .picture_in_picture_host_id(self.picture_in_picture_host_id.get());
+        let spherical = self.renderer.borrow().projection.is_spherical();
+        let fill = matches!(self.renderer.borrow().content_mode, ContentMode::Fill);
+        // Planar video presents as the view's own engine layer through an
+        // external frame: decoded planes are sampled in place, eligible for
+        // system-compositor promotion. Spherical projection and aspect-fill
+        // crop express transforms the layer cannot, so those modes run the
+        // frame through a warp content on a GPU content view instead.
+        let surface = if spherical || fill {
+            let inbox = Arc::new(Mutex::new(WarpInbox::default()));
+            self.renderer.borrow_mut().warp_inbox = Some(inbox.clone());
+            AnyView::new(GpuContentView::new(VideoWarpContent {
+                inbox,
+                pipeline: None,
+                sampler: None,
+                params: None,
+                bind_group_layout: None,
+                converter: None,
+                frame: None,
+                presented_serial: 0,
+            }))
+        } else {
+            AnyView::new(ExternalFrameView::new(VideoExternalFrameSource {
+                renderer: self.renderer,
+            }))
+        };
         #[cfg(target_os = "android")]
-        let surface = AndroidVideoSurfaceHost::new(surface, self.android_surface_bridge);
+        let surface = AnyView::new(AndroidVideoSurfaceHost::new(
+            surface,
+            self.android_surface_bridge,
+        ));
         IgnorableMetadata::new(
             IgnorableMetadata::new(surface, AccessibilityRole::Image),
             AccessibilityLabel::new("Video content"),
@@ -2015,26 +1986,11 @@ enum DecoderDrain {
     Return,
 }
 
-#[derive(Debug, Default)]
-struct ColorStateFlags {
-    profile_initialized: bool,
-    uniform_dirty: bool,
-}
-
 #[cfg(target_os = "android")]
 #[derive(Debug, Clone, Copy)]
 struct ProtectedPendingFrame {
     sequence: u64,
     presentation_time: Duration,
-}
-
-impl ColorStateFlags {
-    const fn initial() -> Self {
-        Self {
-            profile_initialized: false,
-            uniform_dirty: true,
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -2346,7 +2302,6 @@ struct VideoRenderer {
     preserve_pitch: Binding<bool>,
     content_mode: ContentMode,
     projection: VideoProjection,
-    viewport: Option<(u32, u32)>,
     loops: bool,
     playback_policy: PlaybackPolicy,
     audio_output: AudioOutput,
@@ -2358,23 +2313,13 @@ struct VideoRenderer {
     decode_worker: Option<DecoderWorker>,
     #[cfg(target_os = "android")]
     video_surface_receiver: AndroidVideoSurfaceReceiver,
-    render_pipeline: Option<wgpu::RenderPipeline>,
-    bind_group_layout: Option<wgpu::BindGroupLayout>,
-    spherical_bind_group_layout: Option<wgpu::BindGroupLayout>,
-    spherical_bind_group: Option<wgpu::BindGroup>,
-    sampler: Option<wgpu::Sampler>,
-    surface_format: Option<wgpu::TextureFormat>,
+    presenter: ExternalFramePresenter,
     color_profile: VideoColorInfo,
-    color_uniform_buffer: Option<wgpu::Buffer>,
-    spherical_projection_uniform_buffer: Option<wgpu::Buffer>,
-    last_spherical_projection_uniform: Option<SphericalProjectionUniform>,
+    color_profile_initialized: bool,
     spherical_projection_watchers: Vec<BoxWatcherGuard>,
-    color_flags: ColorStateFlags,
-    decoded_gpu_frame: Option<DecodedGpuFrame>,
-    frame_uploader: DecodedFrameUploader,
-    bind_group: Option<wgpu::BindGroup>,
-    vertex_buffer: Option<wgpu::Buffer>,
-    vertex_layout_key: Option<VertexLayoutKey>,
+    warp_inbox: Option<Arc<Mutex<WarpInbox>>>,
+    warp_serial: Cell<u64>,
+    viewport: Cell<Option<(u32, u32)>>,
     pending_frame: Option<EngineDecodedVideoFrame>,
     #[cfg(target_os = "android")]
     pending_protected_frame: Option<ProtectedPendingFrame>,
@@ -2395,7 +2340,8 @@ struct VideoRenderer {
     media_session: Option<MediaSessionState>,
     media_command_poller: Option<RedrawCommandPoller<MediaCommand>>,
     picture_in_picture_commands: PictureInPictureCommands,
-    redraw_handle: Option<RedrawHandle>,
+    pump_wake_receiver: Option<AsyncReceiver<()>>,
+    pump_wake_redraw: RedrawHandle,
     playback_flags: PlaybackFlags,
     playback_anchor_pts: Duration,
     playback_anchor_instant: Option<Instant>,
@@ -2669,6 +2615,11 @@ impl VideoRenderer {
         );
         let initial_step_forward_generation = playback.step_forward_generation.snapshot();
         let initial_step_backward_generation = playback.step_backward_generation.snapshot();
+        let (pump_wake_sender, pump_wake_receiver) = async_channel::bounded(1);
+        let pump_wake = pump_wake_sender;
+        let pump_wake_redraw = RedrawHandle::new(move || {
+            let _ = pump_wake.try_send(());
+        });
 
         Self {
             picture_in_picture_host_id,
@@ -2698,7 +2649,6 @@ impl VideoRenderer {
             preserve_pitch,
             content_mode,
             projection,
-            viewport: None,
             loops,
             playback_policy,
             audio_output,
@@ -2710,23 +2660,13 @@ impl VideoRenderer {
             decode_worker: None,
             #[cfg(target_os = "android")]
             video_surface_receiver,
-            render_pipeline: None,
-            bind_group_layout: None,
-            spherical_bind_group_layout: None,
-            spherical_bind_group: None,
-            sampler: None,
-            surface_format: None,
+            presenter: ExternalFramePresenter::default(),
             color_profile: VideoColorInfo::default(),
-            color_uniform_buffer: None,
-            spherical_projection_uniform_buffer: None,
-            last_spherical_projection_uniform: None,
+            color_profile_initialized: false,
             spherical_projection_watchers: Vec::new(),
-            color_flags: ColorStateFlags::initial(),
-            decoded_gpu_frame: None,
-            frame_uploader: DecodedFrameUploader::new(),
-            bind_group: None,
-            vertex_buffer: None,
-            vertex_layout_key: None,
+            warp_inbox: None,
+            warp_serial: Cell::new(0),
+            viewport: Cell::new(None),
             pending_frame: None,
             #[cfg(target_os = "android")]
             pending_protected_frame: None,
@@ -2749,7 +2689,8 @@ impl VideoRenderer {
             media_session: None,
             media_command_poller: None,
             picture_in_picture_commands: PictureInPictureCommands::new(picture_in_picture_host_id),
-            redraw_handle: None,
+            pump_wake_receiver: Some(pump_wake_receiver),
+            pump_wake_redraw,
             playback_flags: PlaybackFlags::default(),
             playback_anchor_pts: Duration::ZERO,
             playback_anchor_instant: None,
@@ -2800,9 +2741,6 @@ impl VideoRenderer {
         if self.media_command_poller.is_some() {
             return;
         }
-        let Some(redraw_handle) = self.redraw_handle.clone() else {
-            return;
-        };
         let Some(command_receiver) = self
             .media_session
             .as_ref()
@@ -2810,40 +2748,123 @@ impl VideoRenderer {
         else {
             return;
         };
-        self.media_command_poller =
-            Some(RedrawCommandPoller::spawn(command_receiver, redraw_handle));
+        self.media_command_poller = Some(RedrawCommandPoller::spawn(
+            command_receiver,
+            self.pump_wake_redraw.clone(),
+        ));
     }
 
     fn ensure_picture_in_picture_command_poller(&mut self) {
         if self.picture_in_picture_commands.poller.is_some() {
             return;
         }
-        let Some(redraw_handle) = self.redraw_handle.clone() else {
-            return;
-        };
         self.picture_in_picture_commands.poller = Some(RedrawCommandPoller::spawn(
             self.picture_in_picture_commands.stream.receiver(),
-            redraw_handle,
+            self.pump_wake_redraw.clone(),
         ));
     }
 
-    fn current_color_uniform(&self) -> VideoColorUniform {
-        let surface_format = self
-            .surface_format
-            .unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb);
-        let layout = self
-            .decoded_gpu_frame
-            .as_ref()
-            .map_or(DecodedPixelLayout::Nv12, DecodedGpuFrame::pixel_layout);
-        video_color_uniform(
-            self.color_profile,
-            layout,
-            shader_target_mode(surface_format, self.color_profile.is_hdr()),
-        )
+    /// Installs the external-frame output the view's host built, together
+    /// with the per-device uploader and linear-RGBA converter that write to
+    /// it. Called by [`VideoExternalFrameSource::start`] when the host's
+    /// layer is built and again after a device rebuild.
+    fn start_output(&mut self, output: FrameOutput) {
+        self.presenter.start(output);
+    }
+
+    /// Whether a presentation path exists: a live external-frame output, or
+    /// the warp content's mailbox for spherical projection and cropped fill.
+    fn can_present(&self) -> bool {
+        self.warp_inbox.is_some() || self.presenter.is_live()
+    }
+
+    /// Publishes one decoded frame: its planes reach the engine untouched as
+    /// an external frame through the output's mailbox, or enter the warp
+    /// content's mailbox when the view needs a transform the system layer
+    /// cannot express (spherical projection, aspect-fill crop).
+    fn present_decoded_frame(&mut self, decoded: EngineDecodedVideoFrame) {
+        if self.warp_inbox.is_some() {
+            self.queue_warp_frame(decoded);
+            return;
+        }
+        self.presenter.present(decoded);
+    }
+
+    /// Queues a decoded frame for the warp content. The frame crosses to the
+    /// render thread intact — the content's uploader imports or writes its
+    /// planes on the render device — so no copy happens on the UI thread.
+    fn queue_warp_frame(&self, decoded: EngineDecodedVideoFrame) {
+        let Some(inbox) = self.warp_inbox.as_ref() else {
+            return;
+        };
+        self.sync_warp_params();
+        let item = WarpInboxItem {
+            serial: self.warp_serial.get() + 1,
+            frame: decoded,
+        };
+        self.warp_serial.set(item.serial);
+        let redraw = {
+            let mut slot = lock_warp_inbox(inbox);
+            slot.item = Some(item);
+            slot.redraw.clone()
+        };
+        if let Some(redraw) = redraw {
+            redraw.request_redraw();
+        }
+    }
+
+    /// Interval until the next pump tick. Presentation-time scheduling needs
+    /// the clock polled just before a pending frame goes due; everything else
+    /// is event-driven through the pump's wake channel or a slow idle tick.
+    fn next_pump_delay(&self) -> Duration {
+        if let Some(presentation_time) = self.pending_video_presentation_time() {
+            let due = presentation_time.saturating_sub(self.playback_position(Instant::now()));
+            return due.clamp(
+                Duration::from_millis(1),
+                Duration::from_millis(PUMP_PENDING_FRAME_CAP_MS),
+            );
+        }
+        if self.decode_worker.is_some()
+            || self.decoder_waiting_for_download.is_some()
+            || self.should_poll_source()
+        {
+            return Duration::from_millis(PUMP_ACTIVE_INTERVAL_MS);
+        }
+        Duration::from_millis(PUMP_IDLE_INTERVAL_MS)
+    }
+
+    /// Installs the UI-thread pump task that drives `step_playback`. The task
+    /// wakes on the pump's wake channel (media commands, picture-in-picture
+    /// commands, projection watchers) and on the delay the previous tick
+    /// computed, and exits when the renderer is dropped.
+    fn install_pump(this: &Rc<RefCell<Self>>) {
+        let wake = this
+            .borrow_mut()
+            .pump_wake_receiver
+            .take()
+            .expect("the pump's wake receiver is installed once");
+        let weak = Rc::downgrade(this);
+        spawn_local(async move {
+            loop {
+                let Some(this) = weak.upgrade() else {
+                    break;
+                };
+                let delay = this.borrow().next_pump_delay();
+                futures::select_biased! {
+                    waked = wake.recv().fuse() => { let _ = waked; }
+                    () = futures_timer::Delay::new(delay).fuse() => {}
+                }
+                let Some(this) = weak.upgrade() else {
+                    break;
+                };
+                this.borrow_mut().step_playback();
+            }
+        })
+        .detach();
     }
 
     fn update_color_profile(&mut self, profile: VideoColorInfo, source_label: &str) {
-        if self.color_flags.profile_initialized && self.color_profile == profile {
+        if self.color_profile_initialized && self.color_profile == profile {
             return;
         }
 
@@ -2858,50 +2879,10 @@ impl VideoRenderer {
             profile.is_wide_gamut(),
         );
         self.color_profile = profile;
-        self.color_flags.profile_initialized = true;
-        self.color_flags.uniform_dirty = true;
+        self.color_profile_initialized = true;
     }
 
-    fn upload_color_uniform_if_needed(&mut self, queue: &wgpu::Queue) {
-        if !self.color_flags.uniform_dirty {
-            return;
-        }
-
-        let Some(buffer) = self.color_uniform_buffer.as_ref() else {
-            return;
-        };
-
-        let bytes = self.current_color_uniform().to_bytes();
-        queue.write_buffer(buffer, 0, &bytes);
-        self.color_flags.uniform_dirty = false;
-    }
-
-    fn upload_spherical_projection_uniform_if_needed(
-        &mut self,
-        queue: &wgpu::Queue,
-        surface_width: u32,
-        surface_height: u32,
-    ) {
-        let VideoProjection::Equirectangular(projection) = &self.projection else {
-            return;
-        };
-        let uniform = SphericalProjectionUniform::read(
-            projection,
-            surface_width.max(1),
-            surface_height.max(1),
-        );
-        if self.last_spherical_projection_uniform == Some(uniform) {
-            return;
-        }
-        let buffer = self
-            .spherical_projection_uniform_buffer
-            .as_ref()
-            .expect("spherical render pipeline must own its projection uniform");
-        queue.write_buffer(buffer, 0, &uniform.to_bytes());
-        self.last_spherical_projection_uniform = Some(uniform);
-    }
-
-    fn install_spherical_projection_watchers(&mut self, redraw: &RedrawHandle) {
+    fn install_spherical_projection_watchers(&mut self) {
         let VideoProjection::Equirectangular(projection) = &self.projection else {
             return;
         };
@@ -2909,6 +2890,7 @@ impl VideoRenderer {
             return;
         }
         let viewport = projection.viewport();
+        let redraw = self.pump_wake_redraw.clone();
         self.spherical_projection_watchers = [
             viewport.yaw_signal(),
             viewport.pitch_signal(),
@@ -2920,50 +2902,6 @@ impl VideoRenderer {
             nami::Signal::watch(&signal, move |_| redraw.request_redraw())
         })
         .collect();
-    }
-
-    fn ensure_pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
-        if self.render_pipeline.is_some() {
-            return;
-        }
-        self.surface_format = Some(format);
-        self.color_flags.uniform_dirty = true;
-        tracing::info!("create video GPU render pipeline surface_format={format:?}");
-
-        let spherical = self.projection.is_spherical();
-        let bind_group_layout = create_video_bind_group_layout(device);
-        let spherical_bind_group_layout =
-            spherical.then(|| create_spherical_projection_bind_group_layout(device));
-        let render_pipeline = create_video_render_pipeline(
-            device,
-            &bind_group_layout,
-            spherical_bind_group_layout.as_ref(),
-            format,
-        );
-        let sampler = create_video_sampler(device);
-        let color_uniform_buffer =
-            create_color_uniform_buffer(device, self.current_color_uniform());
-        let spherical_projection_uniform_buffer = spherical.then(|| {
-            let VideoProjection::Equirectangular(projection) = &self.projection else {
-                unreachable!("spherical projection mode must retain its configuration");
-            };
-            create_spherical_projection_uniform_buffer(
-                device,
-                SphericalProjectionUniform::read(projection, 1, 1),
-            )
-        });
-        let spherical_bind_group = spherical_bind_group_layout
-            .as_ref()
-            .zip(spherical_projection_uniform_buffer.as_ref())
-            .map(|(layout, buffer)| create_spherical_projection_bind_group(device, layout, buffer));
-
-        self.bind_group_layout = Some(bind_group_layout);
-        self.spherical_bind_group_layout = spherical_bind_group_layout;
-        self.spherical_bind_group = spherical_bind_group;
-        self.render_pipeline = Some(render_pipeline);
-        self.sampler = Some(sampler);
-        self.color_uniform_buffer = Some(color_uniform_buffer);
-        self.spherical_projection_uniform_buffer = spherical_projection_uniform_buffer;
     }
 
     fn reconcile_source(&mut self) {
@@ -3031,12 +2969,8 @@ impl VideoRenderer {
         self.last_handled_seek_generation = Some(self.playback.seek_generation.snapshot());
         self.last_reported_progress = 0.0;
         self.color_profile = VideoColorInfo::default();
-        self.color_flags.profile_initialized = false;
-        self.color_flags.uniform_dirty = true;
-        self.decoded_gpu_frame = None;
-        self.bind_group = None;
-        self.vertex_buffer = None;
-        self.vertex_layout_key = None;
+        self.color_profile_initialized = false;
+        self.presenter.reset();
 
         self.push_progress_update(0.0);
         self.push_ui_update(UiUpdate::Duration(0.0));
@@ -3048,9 +2982,7 @@ impl VideoRenderer {
         self.push_ui_update(UiUpdate::SubtitleTracks(runtime_subtitle_track_info(
             &self.subtitle_tracks,
         )));
-        if let Some(redraw) = self.redraw_handle.as_ref() {
-            redraw.request_redraw();
-        }
+        self.pump_wake_redraw.request_redraw();
     }
 
     fn reconcile_audio_track_selection(&mut self) {
@@ -3709,7 +3641,11 @@ impl VideoRenderer {
     fn restart_decoder_from_position(&mut self, position: Duration) -> Result<(), String> {
         match self.delivery {
             Delivery::Hls => {
-                self.start_segmented_decode_worker(SegmentedProtocol::Hls, self.viewport, 0.0);
+                self.start_segmented_decode_worker(
+                    SegmentedProtocol::Hls,
+                    self.viewport.get(),
+                    0.0,
+                );
                 if !position.is_zero()
                     && let Some(worker) = self.decode_worker.as_ref()
                 {
@@ -3718,7 +3654,11 @@ impl VideoRenderer {
                 return Ok(());
             }
             Delivery::Dash => {
-                self.start_segmented_decode_worker(SegmentedProtocol::Dash, self.viewport, 0.0);
+                self.start_segmented_decode_worker(
+                    SegmentedProtocol::Dash,
+                    self.viewport.get(),
+                    0.0,
+                );
                 if !position.is_zero()
                     && let Some(worker) = self.decode_worker.as_ref()
                 {
@@ -3741,7 +3681,7 @@ impl VideoRenderer {
         Ok(())
     }
 
-    fn open_decode_state(&mut self, viewport: (u32, u32)) {
+    fn open_decode_state(&mut self, viewport: Option<(u32, u32)>) {
         let restart_from_beginning =
             self.playback_flags.ended_sent && self.last_reported_progress >= 0.999;
         let start_progress = if restart_from_beginning {
@@ -3760,7 +3700,7 @@ impl VideoRenderer {
             Delivery::Hls => {
                 self.start_segmented_decode_worker(
                     SegmentedProtocol::Hls,
-                    Some(viewport),
+                    viewport,
                     start_progress,
                 );
                 self.source_flags.source_error = ErrorReportState::Clear;
@@ -3769,7 +3709,7 @@ impl VideoRenderer {
             Delivery::Dash => {
                 self.start_segmented_decode_worker(
                     SegmentedProtocol::Dash,
-                    Some(viewport),
+                    viewport,
                     start_progress,
                 );
                 self.source_flags.source_error = ErrorReportState::Clear;
@@ -5046,123 +4986,11 @@ impl VideoRenderer {
         self.push_position_update(position.as_secs_f64());
     }
 
-    fn upload_frame_texture(&mut self, frame: &GpuFrame, decoded: DecodedFrame) {
-        let decoded_gpu_frame = self
-            .frame_uploader
-            .upload(decoded, frame.device, frame.queue);
-        if self
-            .decoded_gpu_frame
-            .as_ref()
-            .is_none_or(|current| current.pixel_layout() != decoded_gpu_frame.pixel_layout())
-        {
-            self.color_flags.uniform_dirty = true;
-        }
-        let Some(bind_group_layout) = self.bind_group_layout.as_ref() else {
-            return;
-        };
-        let Some(sampler) = self.sampler.as_ref() else {
-            return;
-        };
-        let Some(color_uniform_buffer) = self.color_uniform_buffer.as_ref() else {
-            return;
-        };
-
-        let y_view = decoded_gpu_frame
-            .y_texture()
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let uv_view = decoded_gpu_frame
-            .uv_texture()
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let entries = [
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&y_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&uv_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: color_uniform_buffer.as_entire_binding(),
-            },
-        ];
-        let bind_group = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Video bind group"),
-            layout: bind_group_layout,
-            entries: &entries,
-        });
-
-        self.decoded_gpu_frame = Some(decoded_gpu_frame);
-        self.bind_group = Some(bind_group);
-        self.vertex_buffer = None;
-        self.vertex_layout_key = None;
-    }
-
-    fn ensure_vertex_buffer(
-        &mut self,
-        device: &wgpu::Device,
-        surface_width: u32,
-        surface_height: u32,
-    ) {
-        let Some(texture) = self.decoded_gpu_frame.as_ref() else {
-            self.vertex_buffer = None;
-            self.vertex_layout_key = None;
-            return;
-        };
-
-        let key = VertexLayoutKey {
-            surface_width: surface_width.max(1),
-            surface_height: surface_height.max(1),
-            video_width: texture.width().max(1),
-            video_height: texture.height().max(1),
-            content_mode: if self.projection.is_spherical() {
-                ContentMode::Stretch
-            } else {
-                self.content_mode
-            },
-        };
-
-        if self.vertex_layout_key.is_some_and(|cached| cached == key) {
-            return;
-        }
-
-        let vertices = build_vertices(
-            key.content_mode,
-            key.video_width,
-            key.video_height,
-            key.surface_width,
-            key.surface_height,
-        );
-        let mut bytes = Vec::with_capacity(vertices.len() * 4 * core::mem::size_of::<f32>());
-        for vertex in vertices {
-            for value in vertex {
-                bytes.extend_from_slice(&value.to_ne_bytes());
-            }
-        }
-
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Video quad vertex buffer"),
-            size: usize_to_u64(bytes.len(), "vertex buffer length"),
-            usage: wgpu::BufferUsages::VERTEX,
-            mapped_at_creation: true,
-        });
-        {
-            let mut mapped = buffer.slice(..).get_mapped_range_mut();
-            mapped.copy_from_slice(&bytes);
-        }
-        buffer.unmap();
-
-        self.vertex_buffer = Some(buffer);
-        self.vertex_layout_key = Some(key);
-    }
-
-    fn step_decoder_if_needed(&mut self, frame: &GpuFrame) {
-        self.viewport = Some((frame.width.max(1), frame.height.max(1)));
+    /// One pump tick: reconciles UI state, polls commands, and runs the
+    /// decode → present step. Called by the pump task installed in
+    /// [`VideoRenderer::install_pump`].
+    fn step_playback(&mut self) {
+        self.sync_warp_params();
         self.reconcile_source();
         self.reconcile_audio_track_selection();
         self.reconcile_video_track_selection();
@@ -5181,7 +5009,7 @@ impl VideoRenderer {
         self.poll_picture_in_picture_commands();
 
         if self.decode_worker.is_none() && self.should_open_decode_worker() {
-            self.open_decode_state((frame.width.max(1), frame.height.max(1)));
+            self.open_decode_state(self.viewport.get());
         }
 
         let should_play = self.should_play();
@@ -5214,7 +5042,7 @@ impl VideoRenderer {
 
         if !should_play
             && self.pending_video_presentation_time().is_none()
-            && self.decoded_gpu_frame.is_some()
+            && self.presenter.last_presented().is_some()
         {
             self.set_buffering(false);
             self.sync_media_session(false);
@@ -5239,13 +5067,16 @@ impl VideoRenderer {
             return;
         }
 
+        if !self.can_present() {
+            return;
+        }
         let Some(pending) = self.pending_frame.as_ref() else {
             return;
         };
         let pending_pts = pending.timing().presentation_time();
 
         let present_immediately =
-            self.decoded_gpu_frame.is_none() || self.pending_frame_step.is_some();
+            self.presenter.last_presented().is_none() || self.pending_frame_step.is_some();
         let due = should_play
             && self
                 .playback_position(now)
@@ -5261,8 +5092,7 @@ impl VideoRenderer {
         };
 
         let pts = decoded.timing().presentation_time();
-        let decoded_frame = decoded.into_frame();
-        self.upload_frame_texture(frame, decoded_frame);
+        self.present_decoded_frame(decoded);
         self.commit_presented_video_frame(pts, should_play);
     }
 
@@ -5320,69 +5150,13 @@ impl VideoRenderer {
         self.maybe_finish_exhausted_playback(should_play, Instant::now());
     }
 
-    /// Clears the surface to black and, once a frame has been decoded, draws
-    /// the current frame's textured quad. The clear always runs: a player
-    /// that has not produced a frame yet presents the same black surface a
-    /// platform video view does — the alternative is whatever the backend
-    /// shows through an untouched target — so only the quad waits on the
-    /// decoded `bind_group`.
-    fn render_surface(&mut self, frame: &GpuFrame) {
-        self.ensure_vertex_buffer(frame.device, frame.width, frame.height);
-        self.upload_color_uniform_if_needed(frame.queue);
-        self.upload_spherical_projection_uniform_if_needed(frame.queue, frame.width, frame.height);
-
-        let mut encoder = frame
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Video render encoder"),
-            });
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Video render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &frame.view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            if let (Some(pipeline), Some(bind_group), Some(vertex_buffer)) = (
-                self.render_pipeline.as_ref(),
-                self.bind_group.as_ref(),
-                self.vertex_buffer.as_ref(),
-            ) {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, bind_group, &[]);
-                if let Some(spherical_bind_group) = self.spherical_bind_group.as_ref() {
-                    pass.set_bind_group(1, spherical_bind_group, &[]);
-                }
-                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                pass.draw(0..6, 0..1);
-            }
-        }
-
-        frame.queue.submit([encoder.finish()]);
-    }
-
     fn current_video_dimensions(&self) -> Option<(u32, u32)> {
-        if let Some(key) = self.vertex_layout_key {
-            return Some((key.video_width.max(1), key.video_height.max(1)));
-        }
-
         if let Some(frame) = self.pending_frame.as_ref() {
             return Some((frame.width().max(1), frame.height().max(1)));
         }
 
-        self.decoded_gpu_frame
-            .as_ref()
+        self.presenter
+            .last_presented()
             .map(|frame| (frame.width().max(1), frame.height().max(1)))
             .or(self.video_dimensions)
     }
@@ -5392,45 +5166,17 @@ impl VideoRenderer {
             u32_to_f32(width, "video width") / u32_to_f32(height, "video height")
         })
     }
-}
 
-impl GpuView for VideoRenderer {
-    fn preferred_surface_hdr(&self) -> Option<bool> {
-        // The persistent renderer may switch between SDR and HDR sources. A float
-        // swapchain preserves both; the shader maps SDR into its linear target.
-        Some(true)
-    }
-
-    fn setup(
-        &mut self,
-        ctx: &GpuContext<'_>,
-        _env: &mut waterui_core::Environment,
-    ) -> impl core::future::Future<Output = ()> {
-        self.redraw_handle = Some(ctx.redraw_handle.clone());
-        self.install_spherical_projection_watchers(&ctx.redraw_handle);
-        self.ensure_picture_in_picture_command_poller();
-        self.ensure_pipeline(ctx.device, ctx.surface_format);
-        core::future::ready(())
-    }
-
-    fn render(&mut self, frame: &mut GpuFrame) {
-        self.step_decoder_if_needed(frame);
-        self.render_surface(frame);
-
-        // Request continuous redraw while playback/buffering is active
-        let needs_redraw = if self.decode_worker.is_none() {
-            self.should_poll_source() || self.should_play() || self.control_flags.is_buffering
-        } else {
-            self.pending_video_presentation_time().is_some()
-                || self.should_play()
-                || self.control_flags.is_buffering
-        };
-        if needs_redraw {
-            frame.request_redraw();
-        }
-    }
-
+    /// Measures the surface against a layout proposal, matching the previous
+    /// renderer's sizing: spherical projection and forced dimensions fill the
+    /// proposal, `ContentMode::Fit` answers with the video's aspect ratio.
     fn measure(&self, proposal: ProposalSize) -> ViewDimensions {
+        if let (Some(width), Some(height)) = (proposal.width, proposal.height) {
+            self.viewport.set(Some((
+                width.max(0.0).to_u32().unwrap_or(u32::MAX),
+                height.max(0.0).to_u32().unwrap_or(u32::MAX),
+            )));
+        }
         if self.projection.is_spherical() || self.content_mode != ContentMode::Fit {
             return ViewDimensions::new(Size::new(
                 proposal.width.unwrap_or(0.0),
@@ -5463,15 +5209,688 @@ impl GpuView for VideoRenderer {
         }
     }
 
-    fn stretch_axis(&self) -> StretchAxis {
-        if self.projection.is_spherical() {
-            return StretchAxis::Both;
-        }
-        match self.content_mode {
-            ContentMode::Fit => StretchAxis::Horizontal,
-            ContentMode::Fill | ContentMode::Stretch => StretchAxis::Both,
+    /// Snapshot of the shader-side warp state: the live spherical camera, or
+    /// nothing for aspect-fill (the crop resolves against the render size).
+    fn warp_params(&self) -> WarpParams {
+        WarpParams {
+            video_size: self.current_video_dimensions().unwrap_or((1, 1)),
+            spherical: match &self.projection {
+                VideoProjection::Equirectangular(projection) => {
+                    Some(SphericalState::read(projection))
+                }
+                VideoProjection::Rectilinear => None,
+            },
         }
     }
+
+    /// Publishes the current warp params to the content and asks it for a
+    /// redraw, so camera gestures repaint without waiting for a new frame.
+    fn sync_warp_params(&self) {
+        let Some(inbox) = self.warp_inbox.as_ref() else {
+            return;
+        };
+        let redraw = {
+            let mut slot = lock_warp_inbox(inbox);
+            slot.params = self.warp_params();
+            slot.redraw.clone()
+        };
+        if let Some(redraw) = redraw {
+            redraw.request_redraw();
+        }
+    }
+}
+
+fn is_remote_url(url: &Url) -> bool {
+    matches!(url.scheme(), Some("http" | "https"))
+}
+
+fn local_source_path(url: &Url) -> PathBuf {
+    PathBuf::from(url.as_str())
+}
+
+fn cached_remote_asset_path(url: &Url, default_extension: &str) -> PathBuf {
+    let cache_root = WaterFs::cache_dir()
+        .expect("self-drawn video playback requires a platform cache directory")
+        .join("waterui")
+        .join("video");
+    let remote_url = StreamingUrl::parse(url.as_str())
+        .expect("remote WaterUI video URL must be a valid absolute URL");
+    AssetCache::new(cache_root).path_for(&remote_url, default_extension)
+}
+
+fn cached_video_path(url: &Url) -> PathBuf {
+    cached_remote_asset_path(url, "mp4")
+}
+
+fn cached_subtitle_path(url: &Url) -> PathBuf {
+    cached_remote_asset_path(url, "vtt")
+}
+
+fn start_asset_download(url: &str, destination: PathBuf) -> (PathBuf, Receiver<DownloadUpdate>) {
+    let (sender, receiver) = mpsc::channel();
+
+    let remote_url = match StreamingUrl::parse(url) {
+        Ok(url) => url,
+        Err(error) => {
+            let _ = sender.send(DownloadUpdate::Failed(error.to_string()));
+            return (destination, receiver);
+        }
+    };
+    let progress_quantum = NonZeroUsize::new(DOWNLOAD_PROGRESS_REPORT_INTERVAL_BYTES)
+        .expect("download progress interval must be non-zero");
+    let request = match ProgressiveDownloadRequest::new_cached(
+        remote_url,
+        destination.clone(),
+        progress_quantum,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            let _ = sender.send(DownloadUpdate::Failed(error.to_string()));
+            return (destination, receiver);
+        }
+    };
+    let growing_path = request.destination().to_owned();
+    let probe_path = growing_path.clone();
+    spawn_local(async move {
+        let mut last_probe = 0usize;
+        let mut ready_sent = false;
+        let result = download(request, |event| {
+            let transfer_finished = matches!(event, DownloadEvent::Finished(_));
+            let progress = match event {
+                DownloadEvent::Started(progress)
+                | DownloadEvent::Progress(progress)
+                | DownloadEvent::Finished(progress) => progress,
+            };
+            let _ = sender.send(DownloadUpdate::Progress {
+                bytes_written: progress.bytes_written,
+                total_bytes: progress.total_bytes,
+            });
+
+            let should_probe = !transfer_finished
+                && !ready_sent
+                && progress.bytes_written >= STREAMING_MIN_READY_BYTES
+                && progress.bytes_written.saturating_sub(last_probe)
+                    >= STREAMING_PROBE_INTERVAL_BYTES;
+            if should_probe {
+                last_probe = progress.bytes_written;
+                if VideoReader::open(&probe_path).is_ok() {
+                    ready_sent = true;
+                    let _ = sender.send(DownloadUpdate::Ready);
+                }
+            }
+        })
+        .await;
+        match result {
+            Ok(receipt) => {
+                let _ = sender.send(DownloadUpdate::Finished(receipt.destination().to_owned()));
+            }
+            Err(error) => {
+                let _ = sender.send(DownloadUpdate::Failed(error.to_string()));
+            }
+        }
+    })
+    .detach();
+
+    (growing_path, receiver)
+}
+
+/// Publishes decoded frames to a [`FrameOutput`]: imports or writes their
+/// planes on the output's device exactly once, then installs them in the
+/// layer's mailbox as [`ExternalFrame`]s. Everything owned here is bound to
+/// the output's device, so `retire` drops the whole set when the host is
+/// rebuilt on another device.
+#[derive(Default)]
+struct ExternalFramePresenter {
+    output: Option<FrameOutput>,
+    uploader: Option<DecodedFrameUploader>,
+    converter: Option<LinearRgbaConverter>,
+    last_presented: Option<DecodedGpuFrame>,
+}
+
+impl ExternalFramePresenter {
+    /// Installs the output and the per-device uploader and converter.
+    fn start(&mut self, output: FrameOutput) {
+        self.uploader = Some(DecodedFrameUploader::new());
+        self.converter = Some(LinearRgbaConverter::new(output.device()));
+        self.output = Some(output);
+    }
+
+    /// Drops the retired output and every resource bound to its device.
+    fn retire(&mut self) {
+        self.output = None;
+        self.uploader = None;
+        self.converter = None;
+        self.last_presented = None;
+    }
+
+    /// Clears the retained presentation without retiring the output.
+    fn reset(&mut self) {
+        self.last_presented = None;
+    }
+
+    /// Whether a live output is installed.
+    fn is_live(&self) -> bool {
+        self.output
+            .as_ref()
+            .is_some_and(|output| !output.is_retired())
+    }
+
+    /// The frame the layer most recently presented, retained so its planes
+    /// stay alive on screen until the next frame replaces them.
+    const fn last_presented(&self) -> Option<&DecodedGpuFrame> {
+        self.last_presented.as_ref()
+    }
+
+    /// The uploader's plane-import counters: `(imported, uploaded)`. A
+    /// hardware-decoded frame adds to the first only — its planes reach the
+    /// engine with no copy.
+    #[cfg(test)]
+    fn plane_counters(&self) -> (u64, u64) {
+        self.uploader.as_ref().map_or((0, 0), |uploader| {
+            (uploader.imported_frames(), uploader.uploaded_frames())
+        })
+    }
+
+    /// Uploads a decoded frame's planes on the output device and publishes
+    /// them to the engine as an external frame.
+    fn present(&mut self, decoded: EngineDecodedVideoFrame) {
+        let Some(output) = self.output.as_ref() else {
+            return;
+        };
+        if output.is_retired() {
+            self.retire();
+            return;
+        }
+        let color = decoded.color_info();
+        let device = output.device().clone();
+        let queue = output.queue().clone();
+        let gpu = self
+            .uploader
+            .as_mut()
+            .expect("frame uploader is installed with the frame output")
+            .upload(decoded.into_frame(), &device, &queue);
+        let frame = if let Some(frame_color) = engine_frame_color(color) {
+            ExternalFrame::yuv(
+                gpu.y_texture().clone(),
+                gpu.uv_texture().clone(),
+                frame_color,
+            )
+        } else {
+            // The engine has no constant-luminance BT.2020 matrix; that
+            // path converts to linear RGBA on the GPU and presents the
+            // converted plane instead.
+            let rgba = self
+                .converter
+                .as_ref()
+                .expect("linear RGBA converter is installed with the frame output")
+                .convert(&device, &queue, &gpu, color);
+            ExternalFrame::rgb(rgba, RgbAlpha::Opaque, LINEAR_SRGB_FRAME_COLOR)
+        };
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                tracing::error!("decoded frame does not meet the external-frame contract: {error}");
+                return;
+            }
+        };
+        match output.present(frame) {
+            Ok(()) => {
+                self.last_presented = Some(gpu);
+            }
+            Err(RetiredOutput) => {
+                self.retire();
+            }
+        }
+    }
+}
+
+/// Bridges the renderer onto the view's own engine layer: decoded planes are
+/// presented as external frames through the [`FrameOutput`] the layer hands
+/// [`ExternalFrameSource::start`].
+struct VideoExternalFrameSource {
+    renderer: Rc<RefCell<VideoRenderer>>,
+}
+
+impl ExternalFrameSource for VideoExternalFrameSource {
+    fn start(&mut self, output: FrameOutput) {
+        self.renderer.borrow_mut().start_output(output);
+    }
+
+    fn is_opaque(&self) -> bool {
+        true
+    }
+
+    fn intrinsic_size(&self) -> Option<Size> {
+        self.renderer
+            .borrow()
+            .current_video_dimensions()
+            .map(|(width, height)| {
+                Size::new(
+                    u32_to_f32(width, "video width"),
+                    u32_to_f32(height, "video height"),
+                )
+            })
+    }
+
+    fn measure(&self, proposal: ProposalSize) -> ViewDimensions {
+        self.renderer.borrow().measure(proposal)
+    }
+
+    fn preferred_surface_hdr(&self) -> Option<bool> {
+        // The persistent renderer may switch between SDR and HDR sources, so
+        // the view prefers a float surface; the engine maps SDR into it.
+        Some(true)
+    }
+}
+
+/// Mailbox between the UI thread's [`VideoRenderer`] and the render thread's
+/// [`VideoWarpContent`]: the newest undrawn frame and the latest warp params.
+#[derive(Default)]
+struct WarpInbox {
+    item: Option<WarpInboxItem>,
+    params: WarpParams,
+    redraw: Option<RedrawHandle>,
+}
+
+struct WarpInboxItem {
+    serial: u64,
+    frame: EngineDecodedVideoFrame,
+}
+
+/// Warp state the UI thread publishes; plain data so it can cross threads.
+#[derive(Debug, Clone, Copy, Default)]
+struct WarpParams {
+    video_size: (u32, u32),
+    spherical: Option<SphericalState>,
+}
+
+/// A snapshot of the spherical camera at pump time.
+#[derive(Debug, Clone, Copy)]
+struct SphericalState {
+    yaw_degrees: f32,
+    pitch_degrees: f32,
+    vertical_field_of_view_degrees: f32,
+    stereo_layout: SphericalStereoLayout,
+}
+
+impl SphericalState {
+    fn read(projection: &EquirectangularProjection) -> Self {
+        let viewport = projection.viewport();
+        Self {
+            yaw_degrees: viewport.yaw_degrees(),
+            pitch_degrees: viewport.pitch_degrees(),
+            vertical_field_of_view_degrees: viewport.vertical_field_of_view_degrees(),
+            stereo_layout: projection.layout(),
+        }
+    }
+}
+
+fn lock_warp_inbox(inbox: &Mutex<WarpInbox>) -> std::sync::MutexGuard<'_, WarpInbox> {
+    inbox
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Colour of the codec's linear-RGBA output when it is presented as an
+/// external frame: sRGB primaries, linear light, 203-nit reference white —
+/// exactly what [`LinearRgbaConverter`] emits.
+const LINEAR_SRGB_FRAME_COLOR: FrameColor = FrameColor {
+    matrix: YuvMatrix::Bt709,
+    range: YuvRange::Full,
+    chroma_siting: ChromaSiting::CENTERED,
+    primaries: Primaries::Bt709,
+    transfer: Transfer::Linear,
+    reference_white: 203.0,
+    hlg_peak: 1.0,
+};
+
+/// Maps a decoded frame's colour metadata onto the engine's frame colour
+/// vocabulary. `None` marks the constant-luminance BT.2020 matrix the engine
+/// has no entry for: that stream converts to linear RGBA first.
+const fn engine_frame_color(color: VideoColorInfo) -> Option<FrameColor> {
+    let matrix = match color.matrix {
+        MatrixCoefficients::Bt601 => YuvMatrix::Bt601,
+        MatrixCoefficients::Bt709 => YuvMatrix::Bt709,
+        MatrixCoefficients::Bt2020NonConstantLuminance => YuvMatrix::Bt2020,
+        MatrixCoefficients::Bt2020ConstantLuminance => return None,
+    };
+    Some(FrameColor {
+        matrix,
+        range: match color.range {
+            ColorRange::Limited => YuvRange::Video,
+            ColorRange::Full => YuvRange::Full,
+        },
+        // MPEG chroma siting: H.264/HEVC codestreams place chroma at the
+        // left edge of the luma sample pair.
+        chroma_siting: ChromaSiting::LEFT,
+        primaries: match color.primaries {
+            ColorPrimaries::Bt601 | ColorPrimaries::Bt709 => Primaries::Bt709,
+            ColorPrimaries::DisplayP3 => Primaries::DisplayP3,
+            ColorPrimaries::Bt2020 => Primaries::Bt2020,
+        },
+        transfer: match color.transfer {
+            TransferFunction::Sdr => Transfer::Bt709,
+            TransferFunction::Pq => Transfer::Pq,
+            // `VideoColorInfo` carries no HLG peak; 1000 is the codified
+            // nominal peak of an HLG signal.
+            TransferFunction::Hlg => Transfer::Hlg,
+        },
+        reference_white: 203.0,
+        hlg_peak: 1000.0,
+    })
+}
+
+/// GPU-side warp path: draws the decoded frame through the spherical/fill
+/// shader into the view's render texture. Frames arrive through the inbox as
+/// [`EngineDecodedVideoFrame`]s and are imported or uploaded exactly once on
+/// the render device by the content's own uploader.
+struct VideoWarpContent {
+    inbox: Arc<Mutex<WarpInbox>>,
+    pipeline: Option<wgpu::RenderPipeline>,
+    sampler: Option<wgpu::Sampler>,
+    params: Option<wgpu::Buffer>,
+    bind_group_layout: Option<wgpu::BindGroupLayout>,
+    converter: Option<LinearRgbaConverter>,
+    frame: Option<wgpu::Texture>,
+    presented_serial: u64,
+}
+
+/// The warp shader's uniform, resolved against the render surface size.
+#[derive(Debug, Clone, Copy)]
+struct WarpUniform {
+    crop: [f32; 4],
+    yaw_radians: f32,
+    pitch_radians: f32,
+    vertical_field_of_view_radians: f32,
+    stereo_layout: u32,
+    surface_aspect_ratio: f32,
+    mode: u32,
+}
+
+impl WarpUniform {
+    const MODE_FILL: u32 = 0;
+    const MODE_SPHERICAL: u32 = 1;
+
+    /// Resolves the UI-side params against the render target size: the
+    /// spherical camera's aspect or the aspect-fill crop window in UV space.
+    fn resolve(params: WarpParams, surface_width: u32, surface_height: u32) -> Self {
+        let surface_aspect_ratio = u32_to_f32(surface_width.max(1), "warp surface width")
+            / u32_to_f32(surface_height.max(1), "warp surface height");
+        params.spherical.map_or_else(
+            || Self {
+                crop: fill_crop(params.video_size, (surface_width, surface_height)),
+                yaw_radians: 0.0,
+                pitch_radians: 0.0,
+                vertical_field_of_view_radians: 0.0,
+                stereo_layout: 0,
+                surface_aspect_ratio,
+                mode: Self::MODE_FILL,
+            },
+            |state| Self {
+                crop: [0.0, 0.0, 1.0, 1.0],
+                yaw_radians: state.yaw_degrees.to_radians(),
+                pitch_radians: state.pitch_degrees.to_radians(),
+                vertical_field_of_view_radians: state.vertical_field_of_view_degrees.to_radians(),
+                stereo_layout: match state.stereo_layout {
+                    SphericalStereoLayout::Mono => 0,
+                    SphericalStereoLayout::TopBottom => 1,
+                    SphericalStereoLayout::LeftRight => 2,
+                },
+                surface_aspect_ratio,
+                mode: Self::MODE_SPHERICAL,
+            },
+        )
+    }
+
+    fn to_bytes(self) -> [u8; 48] {
+        let mut bytes = [0_u8; 48];
+        for (index, value) in self.crop.iter().enumerate() {
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_ne_bytes());
+        }
+        bytes[16..20].copy_from_slice(&self.yaw_radians.to_ne_bytes());
+        bytes[20..24].copy_from_slice(&self.pitch_radians.to_ne_bytes());
+        bytes[24..28].copy_from_slice(&self.vertical_field_of_view_radians.to_ne_bytes());
+        bytes[28..32].copy_from_slice(&self.stereo_layout.to_ne_bytes());
+        bytes[32..36].copy_from_slice(&self.surface_aspect_ratio.to_ne_bytes());
+        bytes[36..40].copy_from_slice(&self.mode.to_ne_bytes());
+        bytes
+    }
+}
+
+/// The aspect-fill crop window in UV space: `origin.xy` then `size.xy`. The
+/// crop keeps the frame centered while sampling only the region that covers
+/// the surface at equal scale on both axes.
+fn fill_crop(
+    (video_width, video_height): (u32, u32),
+    (surface_width, surface_height): (u32, u32),
+) -> [f32; 4] {
+    let video_ratio = u32_to_f32(video_width.max(1), "video width")
+        / u32_to_f32(video_height.max(1), "video height");
+    let surface_ratio = u32_to_f32(surface_width.max(1), "surface width")
+        / u32_to_f32(surface_height.max(1), "surface height");
+    if surface_ratio > video_ratio {
+        let visible = (video_ratio / surface_ratio).clamp(0.0, 1.0);
+        let crop = (1.0 - visible) * 0.5;
+        [0.0, crop, 1.0, 2.0f32.mul_add(-crop, 1.0)]
+    } else {
+        let visible = (surface_ratio / video_ratio).clamp(0.0, 1.0);
+        let crop = (1.0 - visible) * 0.5;
+        [crop, 0.0, 2.0f32.mul_add(-crop, 1.0), 1.0]
+    }
+}
+
+/// [`GpuContent`] for the spherical and aspect-fill presentations.
+impl GpuContent for VideoWarpContent {
+    fn setup(&mut self, gpu: &GpuContentContext<'_>) {
+        self.converter = Some(LinearRgbaConverter::new(gpu.device));
+        self.bind_group_layout = Some(create_warp_bind_group_layout(gpu.device));
+        self.sampler = Some(create_warp_sampler(gpu.device));
+        self.params = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Video warp params"),
+            size: 48,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        self.pipeline = Some(create_warp_pipeline(
+            gpu.device,
+            self.bind_group_layout
+                .as_ref()
+                .expect("warp layout is installed"),
+            gpu.format,
+        ));
+        lock_warp_inbox(&self.inbox).redraw = Some(gpu.redraw.clone());
+    }
+
+    fn render(&mut self, frame: &mut GpuContentFrame<'_>) {
+        let (item, params) = {
+            let mut slot = lock_warp_inbox(&self.inbox);
+            (slot.item.take(), slot.params)
+        };
+
+        if let Some(item) = item {
+            let color = item.frame.color_info();
+            // `DecodedFrameUploader` is not `Send` on Apple (its Metal
+            // texture cache), so the warp content builds one per frame: a
+            // cache only pays off when a pixel buffer is imported twice,
+            // which the mailbox never does.
+            let gpu_frame = DecodedFrameUploader::new().upload(
+                item.frame.into_frame(),
+                frame.device,
+                frame.queue,
+            );
+            let texture = self
+                .converter
+                .as_ref()
+                .expect("warp converter is installed in setup")
+                .convert(frame.device, frame.queue, &gpu_frame, color);
+            self.frame = Some(texture);
+            self.presented_serial = item.serial;
+        }
+
+        let uniform = WarpUniform::resolve(params, frame.width, frame.height);
+        frame.queue.write_buffer(
+            self.params
+                .as_ref()
+                .expect("warp params buffer is installed in setup"),
+            0,
+            &uniform.to_bytes(),
+        );
+
+        let mut encoder = frame
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Video warp encoder"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Video warp pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: frame.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            if let Some(texture) = self.frame.as_ref() {
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let bind_group = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Video warp bind group"),
+                    layout: self
+                        .bind_group_layout
+                        .as_ref()
+                        .expect("warp layout is installed in setup"),
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(
+                                self.sampler
+                                    .as_ref()
+                                    .expect("warp sampler is installed in setup"),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self
+                                .params
+                                .as_ref()
+                                .expect("warp params buffer is installed in setup")
+                                .as_entire_binding(),
+                        },
+                    ],
+                });
+                pass.set_pipeline(
+                    self.pipeline
+                        .as_ref()
+                        .expect("warp pipeline is installed in setup"),
+                );
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
+        }
+        frame.queue.submit([encoder.finish()]);
+        frame.request_redraw();
+    }
+
+    fn is_opaque(&self) -> bool {
+        true
+    }
+
+    fn preferred_surface_hdr(&self) -> Option<bool> {
+        Some(true)
+    }
+}
+
+fn create_warp_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Video warp bind group layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(48),
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+fn create_warp_sampler(device: &wgpu::Device) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Video warp sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    })
+}
+
+fn create_warp_pipeline(
+    device: &wgpu::Device,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Video warp pipeline layout"),
+        bind_group_layouts: &[Some(bind_group_layout)],
+        immediate_size: 0,
+    });
+    let (vertex, fragment) =
+        SPHERICAL_VIDEO_SHADER.create_render_stages(device, "vs_warp", "fs_warp");
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Video warp pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: vertex.module(),
+            entry_point: Some(vertex.entry_point()),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: fragment.module(),
+            entry_point: Some(fragment.entry_point()),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 impl Drop for VideoRenderer {
@@ -5640,385 +6059,41 @@ impl Drop for MediaSessionState {
     }
 }
 
-/// Layout of the video planes group (`@group(0)`).
-///
-/// The entries must stay dense and in shader-binding order. Shaders reach the
-/// GPU as ahead-of-time SPIR-V through `create_shader_module_passthrough`, so
-/// naga never re-emits them, while `wgpu-hal` numbers Vulkan bindings by entry
-/// position: a layout that skips a binding the shader declares silently shifts
-/// every later one, and the driver then reads a descriptor that is not there.
-fn create_video_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Video bind group layout"),
-        entries: &[
-            video_texture_layout_entry(0),
-            video_texture_layout_entry(1),
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            uniform_layout_entry(3),
-        ],
-    })
-}
-
-/// Layout of the spherical projection group (`@group(1)`).
-///
-/// The projection uniform has a group of its own because `@group(0)` also
-/// carries the compute-only storage texture at binding 4, which a render
-/// pipeline never binds; see [`create_video_bind_group_layout`].
-fn create_spherical_projection_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Spherical projection bind group layout"),
-        entries: &[uniform_layout_entry(0)],
-    })
-}
-
-/// Binds the projection uniform as the spherical pipeline's `@group(1)`.
-fn create_spherical_projection_bind_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    projection_uniform: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Spherical projection bind group"),
-        layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: projection_uniform.as_entire_binding(),
-        }],
-    })
-}
-
-const fn uniform_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: Some(
-                NonZeroU64::new(32).expect("video uniform min binding size is non-zero"),
-            ),
-        },
-        count: None,
-    }
-}
-
-const fn video_texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        },
-        count: None,
-    }
-}
-
-/// Builds the video render pipeline.
-///
-/// A spherical pipeline is exactly one that carries a projection group, so
-/// `spherical_bind_group_layout` selects both the shader and the layout.
-fn create_video_render_pipeline(
-    device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    spherical_bind_group_layout: Option<&wgpu::BindGroupLayout>,
-    format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let spherical = spherical_bind_group_layout.is_some();
-    let shader = if spherical {
-        &crate::VIDEO_YUV_SPHERICAL_SHADER
-    } else {
-        &crate::VIDEO_YUV_SHADER
-    };
-    let fragment_entry_point = if spherical { "fs_spherical" } else { "fs_main" };
-    let (vertex_shader, fragment_shader) =
-        shader.create_render_stages(device, "vs_main", fragment_entry_point);
-    let mut bind_group_layouts = vec![Some(bind_group_layout)];
-    bind_group_layouts.extend(spherical_bind_group_layout.map(Some));
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Video pipeline layout"),
-        bind_group_layouts: &bind_group_layouts,
-        immediate_size: 0,
-    });
-
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Video render pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: vertex_shader.module(),
-            entry_point: Some(vertex_shader.entry_point()),
-            buffers: &[wgpu::VertexBufferLayout {
-                array_stride: usize_to_u64(4 * core::mem::size_of::<f32>(), "video vertex stride"),
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        offset: 0,
-                        shader_location: 0,
-                        format: wgpu::VertexFormat::Float32x2,
-                    },
-                    wgpu::VertexAttribute {
-                        offset: usize_to_u64(
-                            2 * core::mem::size_of::<f32>(),
-                            "video vertex UV offset",
-                        ),
-                        shader_location: 1,
-                        format: wgpu::VertexFormat::Float32x2,
-                    },
-                ],
-            }],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: fragment_shader.module(),
-            entry_point: Some(fragment_shader.entry_point()),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    })
-}
-
-fn create_video_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("Video sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    })
-}
-
-fn create_color_uniform_buffer(device: &wgpu::Device, uniform: VideoColorUniform) -> wgpu::Buffer {
-    create_uniform_buffer(device, "Video color uniform", &uniform.to_bytes())
-}
-
-fn create_spherical_projection_uniform_buffer(
-    device: &wgpu::Device,
-    uniform: SphericalProjectionUniform,
-) -> wgpu::Buffer {
-    create_uniform_buffer(
-        device,
-        "Spherical video projection uniform",
-        &uniform.to_bytes(),
-    )
-}
-
-fn create_uniform_buffer(device: &wgpu::Device, label: &str, bytes: &[u8; 32]) -> wgpu::Buffer {
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: 32,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: true,
-    });
-    {
-        let mut mapped = buffer.slice(..).get_mapped_range_mut();
-        mapped.copy_from_slice(bytes);
-    }
-    buffer.unmap();
-    buffer
-}
-
-fn is_remote_url(url: &Url) -> bool {
-    matches!(url.scheme(), Some("http" | "https"))
-}
-
-fn local_source_path(url: &Url) -> PathBuf {
-    PathBuf::from(url.as_str())
-}
-
-fn cached_remote_asset_path(url: &Url, default_extension: &str) -> PathBuf {
-    let cache_root = WaterFs::cache_dir()
-        .expect("self-drawn video playback requires a platform cache directory")
-        .join("waterui")
-        .join("video");
-    let remote_url = StreamingUrl::parse(url.as_str())
-        .expect("remote WaterUI video URL must be a valid absolute URL");
-    AssetCache::new(cache_root).path_for(&remote_url, default_extension)
-}
-
-fn cached_video_path(url: &Url) -> PathBuf {
-    cached_remote_asset_path(url, "mp4")
-}
-
-fn cached_subtitle_path(url: &Url) -> PathBuf {
-    cached_remote_asset_path(url, "vtt")
-}
-
-fn start_asset_download(url: &str, destination: PathBuf) -> (PathBuf, Receiver<DownloadUpdate>) {
-    let (sender, receiver) = mpsc::channel();
-
-    let remote_url = match StreamingUrl::parse(url) {
-        Ok(url) => url,
-        Err(error) => {
-            let _ = sender.send(DownloadUpdate::Failed(error.to_string()));
-            return (destination, receiver);
-        }
-    };
-    let progress_quantum = NonZeroUsize::new(DOWNLOAD_PROGRESS_REPORT_INTERVAL_BYTES)
-        .expect("download progress interval must be non-zero");
-    let request = match ProgressiveDownloadRequest::new_cached(
-        remote_url,
-        destination.clone(),
-        progress_quantum,
-    ) {
-        Ok(request) => request,
-        Err(error) => {
-            let _ = sender.send(DownloadUpdate::Failed(error.to_string()));
-            return (destination, receiver);
-        }
-    };
-    let growing_path = request.destination().to_owned();
-    let probe_path = growing_path.clone();
-    spawn_local(async move {
-        let mut last_probe = 0usize;
-        let mut ready_sent = false;
-        let result = download(request, |event| {
-            let transfer_finished = matches!(event, DownloadEvent::Finished(_));
-            let progress = match event {
-                DownloadEvent::Started(progress)
-                | DownloadEvent::Progress(progress)
-                | DownloadEvent::Finished(progress) => progress,
-            };
-            let _ = sender.send(DownloadUpdate::Progress {
-                bytes_written: progress.bytes_written,
-                total_bytes: progress.total_bytes,
-            });
-
-            let should_probe = !transfer_finished
-                && !ready_sent
-                && progress.bytes_written >= STREAMING_MIN_READY_BYTES
-                && progress.bytes_written.saturating_sub(last_probe)
-                    >= STREAMING_PROBE_INTERVAL_BYTES;
-            if should_probe {
-                last_probe = progress.bytes_written;
-                if VideoReader::open(&probe_path).is_ok() {
-                    ready_sent = true;
-                    let _ = sender.send(DownloadUpdate::Ready);
-                }
-            }
-        })
-        .await;
-        match result {
-            Ok(receipt) => {
-                let _ = sender.send(DownloadUpdate::Finished(receipt.destination().to_owned()));
-            }
-            Err(error) => {
-                let _ = sender.send(DownloadUpdate::Failed(error.to_string()));
-            }
-        }
-    })
-    .detach();
-
-    (growing_path, receiver)
-}
-
-fn build_vertices(
-    content_mode: ContentMode,
-    video_width: u32,
-    video_height: u32,
-    surface_width: u32,
-    surface_height: u32,
-) -> [[f32; 4]; 6] {
-    let video_ratio = u32_to_f32(video_width.max(1), "video width")
-        / u32_to_f32(video_height.max(1), "video height");
-    let surface_ratio = u32_to_f32(surface_width.max(1), "surface width")
-        / u32_to_f32(surface_height.max(1), "surface height");
-
-    let mut scale_x = 1.0;
-    let mut scale_y = 1.0;
-    let mut u_min = 0.0;
-    let mut u_max = 1.0;
-    let mut v_min = 0.0;
-    let mut v_max = 1.0;
-
-    match content_mode {
-        ContentMode::Fit => {
-            if surface_ratio > video_ratio {
-                scale_x = (video_ratio / surface_ratio).clamp(0.0, 1.0);
-            } else {
-                scale_y = (surface_ratio / video_ratio).clamp(0.0, 1.0);
-            }
-        }
-        ContentMode::Fill => {
-            if surface_ratio > video_ratio {
-                let visible_vertical = (video_ratio / surface_ratio).clamp(0.0, 1.0);
-                let crop = (1.0 - visible_vertical) * 0.5;
-                v_min = crop;
-                v_max = 1.0 - crop;
-            } else {
-                let visible_horizontal = (surface_ratio / video_ratio).clamp(0.0, 1.0);
-                let crop = (1.0 - visible_horizontal) * 0.5;
-                u_min = crop;
-                u_max = 1.0 - crop;
-            }
-        }
-        ContentMode::Stretch => {}
-    }
-
-    [
-        [-scale_x, -scale_y, u_min, v_max],
-        [scale_x, -scale_y, u_max, v_max],
-        [scale_x, scale_y, u_max, v_min],
-        [-scale_x, -scale_y, u_min, v_max],
-        [scale_x, scale_y, u_max, v_min],
-        [-scale_x, scale_y, u_min, v_min],
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        ColorOutputTarget, ContentMode, DecodedPixelLayout, PlaybackObservability, PlaybackPolicy,
-        PresentedFrameHistory, SphericalProjectionUniform, VideoColorInfo, Volume, build_vertices,
-        create_color_uniform_buffer, create_spherical_projection_bind_group,
-        create_spherical_projection_bind_group_layout, create_spherical_projection_uniform_buffer,
-        create_video_bind_group_layout, create_video_render_pipeline, create_video_sampler,
-        effective_audio_volume, next_audio_selection, next_subtitle_selection,
-        next_video_selection, playback_clock_position, progress_for_position,
-        resolve_selected_subtitle_index, runtime_sidecar_subtitle_tracks,
-        runtime_subtitle_track_info, segmented_subtitle_track_selection,
-        select_default_subtitle_track_index, select_live_catch_up_rate, shader_target_mode,
-        should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
-        subtitle_track_info_labels, take_due_timed_metadata, usize_to_u64, video_color_uniform,
+        ExternalFramePresenter, PlaybackObservability, PlaybackPolicy, PresentedFrameHistory,
+        SphericalState, VideoColorInfo, VideoWarpContent, Volume, WarpInbox, WarpInboxItem,
+        WarpParams, WarpUniform, effective_audio_volume, engine_frame_color, fill_crop,
+        lock_warp_inbox, next_audio_selection, next_subtitle_selection, next_video_selection,
+        playback_clock_position, progress_for_position, resolve_selected_subtitle_index,
+        runtime_sidecar_subtitle_tracks, runtime_subtitle_track_info,
+        segmented_subtitle_track_selection, select_default_subtitle_track_index,
+        select_live_catch_up_rate, should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
+        subtitle_track_info_labels, take_due_timed_metadata,
     };
     use std::{
+        cell::RefCell,
         fs,
         num::NonZeroU64,
-        path::Path,
+        path::{Path, PathBuf},
+        process::Command,
+        rc::Rc,
+        sync::{Arc, Mutex, mpsc},
         time::{Duration, Instant},
     };
+    use waterkit_codec::DecodedPixelLayout;
     use waterkit_video::{
         ColorPrimaries, ColorRange, ContentLightLevel, MatrixCoefficients,
         SubtitleTrackSelection as EngineSubtitleTrackSelection,
-        TimedMetadata as EngineTimedMetadata, TransferFunction,
+        TimedMetadata as EngineTimedMetadata, TransferFunction, VideoPlayer,
     };
     use waterui_graphics::{
-        GpuContext, GpuFrame, GpuRuntime, GpuSurface, GpuView, OffscreenRenderConfig, OffscreenSize,
+        ExternalFrameSource, ExternalFrameView, FrameOutput, RedrawHandle,
+        cherenkov::{Display, Readback},
+        cherenkov_gpu::interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
+        gpu::{ExternalFrameRenderer, GpuContentRenderer, GpuRuntime},
+        offscreen::{OffscreenImage, OffscreenSize},
     };
     use waterui_video::{
         AudioTrackSelection, EquirectangularProjection, SphericalStereoLayout, SphericalViewport,
@@ -6124,201 +6199,134 @@ mod tests {
         assert_eq!(queue, vec![late]);
     }
 
-    struct VideoColorVisualRenderer {
-        layout: DecodedPixelLayout,
-        color: VideoColorInfo,
-        pipeline: Option<wgpu::RenderPipeline>,
-        bind_group: Option<wgpu::BindGroup>,
-        spherical_bind_group: Option<wgpu::BindGroup>,
-        vertex_buffer: Option<wgpu::Buffer>,
-        spherical_projection: Option<SphericalProjectionUniform>,
-    }
+    /// A source that hands every `FrameOutput` a host layer starts it with
+    /// to the test, standing in for `VideoExternalFrameSource`.
+    struct OutputProbe(Rc<RefCell<Vec<FrameOutput>>>);
 
-    impl VideoColorVisualRenderer {
-        const fn new(layout: DecodedPixelLayout, color: VideoColorInfo) -> Self {
-            Self {
-                layout,
-                color,
-                pipeline: None,
-                bind_group: None,
-                spherical_bind_group: None,
-                vertex_buffer: None,
-                spherical_projection: None,
-            }
+    impl ExternalFrameSource for OutputProbe {
+        fn start(&mut self, output: FrameOutput) {
+            self.0.borrow_mut().push(output);
         }
 
-        const fn spherical(
-            layout: DecodedPixelLayout,
-            color: VideoColorInfo,
-            spherical_projection: SphericalProjectionUniform,
-        ) -> Self {
-            Self {
-                layout,
-                color,
-                pipeline: None,
-                bind_group: None,
-                spherical_bind_group: None,
-                vertex_buffer: None,
-                spherical_projection: Some(spherical_projection),
-            }
+        fn is_opaque(&self) -> bool {
+            true
         }
     }
 
-    impl GpuView for VideoColorVisualRenderer {
-        fn setup(
-            &mut self,
-            ctx: &GpuContext<'_>,
-            _env: &mut waterui_core::Environment,
-        ) -> impl core::future::Future<Output = ()> {
-            let spherical = self.spherical_projection.is_some();
-            let bind_group_layout = create_video_bind_group_layout(ctx.device);
-            let spherical_bind_group_layout =
-                spherical.then(|| create_spherical_projection_bind_group_layout(ctx.device));
-            let pipeline = create_video_render_pipeline(
-                ctx.device,
-                &bind_group_layout,
-                spherical_bind_group_layout.as_ref(),
-                ctx.surface_format,
-            );
-            let sampler = create_video_sampler(ctx.device);
-            let uniform = create_color_uniform_buffer(
-                ctx.device,
-                video_color_uniform(
-                    self.color,
-                    self.layout,
-                    shader_target_mode(ctx.surface_format, self.color.is_hdr()),
-                ),
-            );
-            let (y_texture, uv_texture) = create_visual_yuv_textures(ctx.device, self.layout);
-            write_visual_color_bars(ctx.queue, &y_texture, &uv_texture, self.layout);
-            let y_view = y_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let uv_view = uv_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let projection_uniform = self.spherical_projection.map(|projection| {
-                create_spherical_projection_uniform_buffer(ctx.device, projection)
-            });
-            let entries = [
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&y_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&uv_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: uniform.as_entire_binding(),
-                },
-            ];
-            let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Video color visual bind group"),
-                layout: &bind_group_layout,
-                entries: &entries,
-            });
-            let spherical_bind_group = spherical_bind_group_layout
-                .as_ref()
-                .zip(projection_uniform.as_ref())
-                .map(|(layout, buffer)| {
-                    create_spherical_projection_bind_group(ctx.device, layout, buffer)
-                });
-            let vertices = build_vertices(
-                ContentMode::Stretch,
-                VISUAL_WIDTH,
-                VISUAL_HEIGHT,
-                VISUAL_WIDTH,
-                VISUAL_HEIGHT,
-            );
-            let mut vertex_bytes =
-                Vec::with_capacity(vertices.len() * 4 * core::mem::size_of::<f32>());
-            for vertex in vertices {
-                for value in vertex {
-                    vertex_bytes.extend_from_slice(&value.to_ne_bytes());
-                }
-            }
-            let vertex_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Video color visual vertex buffer"),
-                size: usize_to_u64(vertex_bytes.len(), "visual vertex buffer length"),
-                usage: wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: true,
-            });
-            {
-                let mut mapped = vertex_buffer.slice(..).get_mapped_range_mut();
-                mapped.copy_from_slice(&vertex_bytes);
-            }
-            vertex_buffer.unmap();
+    fn output_probe() -> (ExternalFrameView, Rc<RefCell<Vec<FrameOutput>>>) {
+        let outputs = Rc::new(RefCell::new(Vec::new()));
+        (
+            ExternalFrameView::new(OutputProbe(Rc::clone(&outputs))),
+            outputs,
+        )
+    }
 
-            self.pipeline = Some(pipeline);
-            self.bind_group = Some(bind_group);
-            self.spherical_bind_group = spherical_bind_group;
-            self.vertex_buffer = Some(vertex_buffer);
-            core::future::ready(())
-        }
+    fn visual_size() -> OffscreenSize {
+        OffscreenSize::try_from_pixels(VISUAL_WIDTH, VISUAL_HEIGHT)
+            .expect("visual dimensions must be valid")
+    }
 
-        fn render(&mut self, frame: &mut GpuFrame) {
-            let pipeline = self
-                .pipeline
-                .as_ref()
-                .expect("visual pipeline must be set up");
-            let bind_group = self
-                .bind_group
-                .as_ref()
-                .expect("visual bind group must be set up");
-            let spherical_bind_group = self.spherical_bind_group.as_ref();
-            let vertex_buffer = self
-                .vertex_buffer
-                .as_ref()
-                .expect("visual vertex buffer must be set up");
-            let mut encoder =
-                frame
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("Video color visual encoder"),
-                    });
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Video color visual pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &frame.view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, bind_group, &[]);
-                if let Some(spherical_bind_group) = spherical_bind_group {
-                    pass.set_bind_group(1, spherical_bind_group, &[]);
-                }
-                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                pass.draw(0..6, 0..1);
-            }
-            frame.queue.submit([encoder.finish()]);
-        }
+    /// The display the snapshots are taken under: unit scale, SDR headroom.
+    const DISPLAY: Display = Display {
+        scale: 1.0,
+        headroom: 1.0,
+    };
+
+    /// A host texture in the float format a native host presents.
+    fn host_target(device: &wgpu::Device) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("video visual target"),
+            size: wgpu::Extent3d {
+                width: VISUAL_WIDTH,
+                height: VISUAL_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    }
+
+    /// Reads a presented `Rgba16Float` host texture back as sRGB8.
+    fn read_target(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::Texture,
+    ) -> OffscreenImage {
+        let (width, height) = (target.width(), target.height());
+        let row = width * 8;
+        let padded = row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("video visual readback"),
+            size: u64::from(padded * height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("video visual readback encoder"),
+        });
+        encoder.copy_texture_to_buffer(
+            target.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(height),
+                },
+            },
+            target.size(),
+        );
+        queue.submit([encoder.finish()]);
+        let (mapped, done) = mpsc::channel();
+        buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+            mapped.send(result).expect("the test waits for the map");
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the readback completes");
+        done.recv()
+            .expect("the map callback ran")
+            .expect("the readback maps");
+        let bytes = buffer
+            .get_mapped_range(..)
+            .expect("the mapped readback is readable");
+        let pixels = (0..height)
+            .flat_map(|y| {
+                let start = usize::try_from(y * padded).expect("row offsets fit usize");
+                bytes[start..start + usize::try_from(row).expect("row length fits usize")]
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|texel| {
+                        core::array::from_fn(|channel| {
+                            half::f16::from_le_bytes([texel[channel * 2], texel[channel * 2 + 1]])
+                                .to_f32()
+                        })
+                    })
+                    .collect::<Vec<[f32; 4]>>()
+            })
+            .collect();
+        OffscreenImage::from_readback(&Readback {
+            width,
+            height,
+            pixels,
+        })
     }
 
     fn create_visual_yuv_textures(
         device: &wgpu::Device,
         layout: DecodedPixelLayout,
     ) -> (wgpu::Texture, wgpu::Texture) {
+        // Integer formats: the engine samples the planes as raw YUV codes.
         let (y_format, uv_format) = match layout {
-            DecodedPixelLayout::Nv12 => {
-                (wgpu::TextureFormat::R8Unorm, wgpu::TextureFormat::Rg8Unorm)
+            DecodedPixelLayout::Nv12 => (wgpu::TextureFormat::R8Uint, wgpu::TextureFormat::Rg8Uint),
+            DecodedPixelLayout::P010 => {
+                (wgpu::TextureFormat::R16Uint, wgpu::TextureFormat::Rg16Uint)
             }
-            DecodedPixelLayout::P010 => (
-                wgpu::TextureFormat::R16Unorm,
-                wgpu::TextureFormat::Rg16Unorm,
-            ),
         };
         let create = |label, width, height, format| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -6423,103 +6431,254 @@ mod tests {
         }
     }
 
-    fn export_video_color_visual(
+    /// Presents one hand-built bi-planar frame through a real engine layer:
+    /// the same planes the decoder's uploader produces, wrapped in the same
+    /// `ExternalFrame` the production presenter builds.
+    fn export_external_frame_visual(
         runtime: &GpuRuntime,
         output_dir: &Path,
         file_name: &str,
         layout: DecodedPixelLayout,
         color: VideoColorInfo,
     ) {
-        let size = OffscreenSize::try_from_pixels(VISUAL_WIDTH, VISUAL_HEIGHT)
-            .expect("video visual dimensions must be valid");
-        let config = OffscreenRenderConfig::new(size).format(wgpu::TextureFormat::Rgba8UnormSrgb);
-        let mut env = waterui_core::Environment::new();
-        let output = pollster::block_on(
-            GpuSurface::new(VideoColorVisualRenderer::new(layout, color))
-                .render_offscreen(runtime, config, &mut env),
-        )
-        .expect("video color visual must render through the production GPU shader");
-        assert_eq!((output.width, output.height), (VISUAL_WIDTH, VISUAL_HEIGHT));
-        output
+        let context = runtime.context();
+        let (device, queue) = (context.device(), context.queue());
+        let (view, outputs) = output_probe();
+        let mut renderer = ExternalFrameRenderer::new(
+            runtime,
+            &view.stream(),
+            visual_size(),
+            RedrawHandle::new(|| {}),
+        );
+        let (y_texture, uv_texture) = create_visual_yuv_textures(device, layout);
+        write_visual_color_bars(queue, &y_texture, &uv_texture, layout);
+        let frame_color =
+            engine_frame_color(color).expect("the test colour must be engine-representable");
+        let frame = ExternalFrame::yuv(y_texture, uv_texture, frame_color)
+            .expect("visual planes meet the frame contract");
+        outputs.borrow()[0]
+            .present(frame)
+            .expect("the output is live");
+        let target = host_target(device);
+        renderer.present(&target, DISPLAY);
+        read_target(device, queue, &target)
             .save_png(output_dir.join(file_name))
             .expect("video color visual PNG must be saved");
     }
 
-    fn export_spherical_video_visual(runtime: &GpuRuntime, output_dir: &Path) {
+    /// Presents a real decoded frame through [`ExternalFramePresenter`] and
+    /// the view's engine layer, then reads the composited host target.
+    fn export_playback_frame(
+        runtime: &GpuRuntime,
+        output_dir: &Path,
+        clip: &Path,
+        file_name: &str,
+        skip_frames: usize,
+    ) {
+        let context = runtime.context();
+        let (device, queue) = (context.device(), context.queue());
+        let (view, outputs) = output_probe();
+        let mut renderer = ExternalFrameRenderer::new(
+            runtime,
+            &view.stream(),
+            visual_size(),
+            RedrawHandle::new(|| {}),
+        );
+        let mut presenter = ExternalFramePresenter::default();
+        presenter.start(outputs.borrow()[0].clone());
+
+        let mut player = VideoPlayer::open(clip).expect("the snapshot clip must open");
+        let mut decoded = None;
+        for _ in 0..=skip_frames {
+            match player.next_frame().expect("the snapshot clip must decode") {
+                Some(frame) => decoded = Some(frame),
+                None => break,
+            }
+        }
+        let decoded = decoded.expect("the clip must produce a mid-playback frame");
+        presenter.present(decoded);
+        assert!(
+            presenter.last_presented().is_some(),
+            "the decoded frame was presented to the output"
+        );
+        // Zero-copy witness: VideoToolbox decodes on this VM are hardware
+        // frames, so the presentation must have imported the planes in place
+        // — the software upload path stays at zero and no intermediate
+        // texture exists between the decoder's IOSurface and the engine.
+        let (imported, uploaded) = presenter.plane_counters();
+        assert_eq!(imported, 1, "the hardware frame imported in place");
+        assert_eq!(uploaded, 0, "no software upload happened");
+
+        let target = host_target(device);
+        renderer.present(&target, DISPLAY);
+        let readback = read_target(device, queue, &target);
+        readback
+            .save_png(output_dir.join(file_name))
+            .expect("playback frame PNG must be saved");
+    }
+
+    /// Draws a real decoded frame through [`VideoWarpContent`]'s spherical
+    /// pipeline into a host target.
+    fn export_spherical_video_visual(runtime: &GpuRuntime, output_dir: &Path, clip: &Path) {
+        let context = runtime.context();
+        let (device, queue) = (context.device(), context.queue());
+        let mut player = VideoPlayer::open(clip).expect("the spherical clip must open");
+        let decoded = player
+            .next_frame()
+            .expect("the spherical clip must decode")
+            .expect("the spherical clip has a first frame");
         let projection = EquirectangularProjection::new(SphericalViewport::new(25.0, 30.0, 100.0))
             .stereo_layout(SphericalStereoLayout::Mono);
-        let uniform = SphericalProjectionUniform::read(&projection, VISUAL_WIDTH, VISUAL_HEIGHT);
-        let size = OffscreenSize::try_from_pixels(VISUAL_WIDTH, VISUAL_HEIGHT)
-            .expect("spherical video visual dimensions must be valid");
-        let config = OffscreenRenderConfig::new(size).format(wgpu::TextureFormat::Rgba8UnormSrgb);
-        let mut env = waterui_core::Environment::new();
-        let output = pollster::block_on(
-            GpuSurface::new(VideoColorVisualRenderer::spherical(
-                DecodedPixelLayout::Nv12,
-                VideoColorInfo::default(),
-                uniform,
-            ))
-            .render_offscreen(runtime, config, &mut env),
-        )
-        .expect("spherical visual must render through the production GPU shader");
-        output
-            .save_png(output_dir.join("nv12_equirectangular_mono.png"))
+        let inbox = Arc::new(Mutex::new(WarpInbox::default()));
+        {
+            let mut slot = lock_warp_inbox(&inbox);
+            slot.params = WarpParams {
+                video_size: (decoded.width().max(1), decoded.height().max(1)),
+                spherical: Some(SphericalState::read(&projection)),
+            };
+            slot.item = Some(WarpInboxItem {
+                serial: 1,
+                frame: decoded,
+            });
+        }
+        let content = VideoWarpContent {
+            inbox,
+            pipeline: None,
+            sampler: None,
+            params: None,
+            bind_group_layout: None,
+            converter: None,
+            frame: None,
+            presented_serial: 0,
+        };
+        let mut view = waterui_graphics::GpuContentView::new(content);
+        let boxed = view.take_engine_content(|| {});
+        let mut renderer = GpuContentRenderer::new(runtime, boxed, visual_size());
+        let target = host_target(device);
+        renderer.present(&target, DISPLAY);
+        read_target(device, queue, &target)
+            .save_png(output_dir.join("nv12_equirectangular_mono.after.png"))
             .expect("spherical video visual PNG must be saved");
     }
 
+    /// Encodes a short color-bar clip, or `None` when no ffmpeg is installed.
+    fn encode_clip(file_name: &str, args: &[&str]) -> Option<PathBuf> {
+        let path = std::env::temp_dir().join(file_name);
+        let status = Command::new("ffmpeg")
+            .arg("-y")
+            .args(args)
+            .arg(&path)
+            .output()
+            .ok()?;
+        status.status.success().then_some(path)
+    }
+
+    /// Mid-playback frames of real decodes: VideoToolbox imports on the
+    /// external-frame path, end to end.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn gpu_export_playback_frames() {
+        let output_dir = Path::new("/tmp/waterui_video_visual");
+        fs::create_dir_all(output_dir).expect("video visual output directory must be created");
+        let runtime = pollster::block_on(GpuRuntime::new())
+            .expect("playback visuals require a working GPU runtime");
+
+        let Some(sdr_clip) = encode_clip(
+            "waterui_video_sdr.mp4",
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x180:rate=30:duration=1",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+            ],
+        ) else {
+            tracing::warn!("ffmpeg is not installed; skipping playback visuals");
+            return;
+        };
+        export_playback_frame(
+            &runtime,
+            output_dir,
+            &sdr_clip,
+            "playback_bt709_sdr.after.png",
+            15,
+        );
+        export_spherical_video_visual(&runtime, output_dir, &sdr_clip);
+
+        if let Some(hdr_clip) = encode_clip(
+            "waterui_video_hdr_p010.mp4",
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x180:rate=30:duration=1,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=yuv420p10le",
+                "-c:v",
+                "libx265",
+                "-tag:v",
+                "hvc1",
+                "-movflags",
+                "+write_colr",
+            ],
+        ) {
+            export_playback_frame(
+                &runtime,
+                output_dir,
+                &hdr_clip,
+                "playback_bt2020_pq.after.png",
+                15,
+            );
+        } else {
+            tracing::warn!("ffmpeg could not encode the HDR clip; skipping it");
+        }
+    }
+
+    /// Hand-built planes through the external-frame layer, exercising the
+    /// colour mapping the presenter attaches to decoded frames.
     #[test]
     fn gpu_export_video_color_visuals() {
         let output_dir = Path::new("/tmp/waterui_video_visual");
         fs::create_dir_all(output_dir).expect("video visual output directory must be created");
         let runtime = pollster::block_on(GpuRuntime::new())
-            .expect("video color visual requires a working GPU runtime");
+            .expect("video color visuals require a working GPU runtime");
 
-        export_video_color_visual(
+        export_external_frame_visual(
             &runtime,
             output_dir,
-            "nv12_bt709_sdr.png",
+            "nv12_bt709_sdr.after.png",
             DecodedPixelLayout::Nv12,
             VideoColorInfo::default(),
         );
-        // P010 planes allocate as R16Unorm/Rg16Unorm, which the device only
-        // carries when its adapter offers TEXTURE_FORMAT_16BIT_NORM — headless
-        // CI adapters may not. That asymmetry is the documented contract of
-        // `required_media_features`: such an adapter cannot present 10-bit
-        // planes at all, so the 10-bit visual is unrenderable there rather
-        // than approximated.
-        if runtime
-            .context()
-            .device
-            .features()
-            .contains(wgpu::Features::TEXTURE_FORMAT_16BIT_NORM)
-        {
-            export_video_color_visual(
-                &runtime,
-                output_dir,
-                "p010_bt2020_pq_hdr10_to_sdr.png",
-                DecodedPixelLayout::P010,
-                VideoColorInfo {
-                    matrix: MatrixCoefficients::Bt2020NonConstantLuminance,
-                    primaries: ColorPrimaries::Bt2020,
-                    transfer: TransferFunction::Pq,
-                    range: ColorRange::Limited,
-                    content_light_level: Some(ContentLightLevel::new(1_000, 400)),
-                    dolby_vision: false,
-                },
-            );
-        } else {
-            tracing::warn!(
-                "skipping the P010 color visual: this adapter cannot represent 10-bit planes"
-            );
-        }
-        export_spherical_video_visual(&runtime, output_dir);
+        export_external_frame_visual(
+            &runtime,
+            output_dir,
+            "p010_bt2020_pq_hdr10_to_sdr.after.png",
+            DecodedPixelLayout::P010,
+            VideoColorInfo {
+                matrix: MatrixCoefficients::Bt2020NonConstantLuminance,
+                primaries: ColorPrimaries::Bt2020,
+                transfer: TransferFunction::Pq,
+                range: ColorRange::Limited,
+                content_light_level: Some(ContentLightLevel::new(1_000, 400)),
+                dolby_vision: false,
+            },
+        );
     }
 
     #[test]
-    fn spherical_projection_uniform_encodes_viewport_layout_and_surface() {
-        let projection = EquirectangularProjection::new(SphericalViewport::new(90.0, -45.0, 60.0))
-            .stereo_layout(SphericalStereoLayout::TopBottom);
-        let uniform = SphericalProjectionUniform::read(&projection, 3840, 2160);
+    fn warp_uniform_encodes_spherical_viewport_and_surface() {
+        let params = WarpParams {
+            video_size: (3840, 2160),
+            spherical: Some(SphericalState {
+                yaw_degrees: 90.0,
+                pitch_degrees: -45.0,
+                vertical_field_of_view_degrees: 60.0,
+                stereo_layout: SphericalStereoLayout::TopBottom,
+            }),
+        };
+        let uniform = WarpUniform::resolve(params, 3840, 2160);
 
         assert!((uniform.yaw_radians - core::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
         assert!((uniform.pitch_radians + core::f32::consts::FRAC_PI_4).abs() < f32::EPSILON);
@@ -6528,25 +6687,68 @@ mod tests {
                 < f32::EPSILON
         );
         assert_eq!(uniform.stereo_layout, 1);
+        assert_eq!(uniform.mode, WarpUniform::MODE_SPHERICAL);
         assert!((uniform.surface_aspect_ratio - 16.0 / 9.0).abs() < f32::EPSILON);
     }
 
     #[test]
-    fn hdr_source_maps_to_sdr_on_srgb_surface() {
-        let mode = shader_target_mode(wgpu::TextureFormat::Bgra8UnormSrgb, true);
-        assert_eq!(mode, ColorOutputTarget::LinearSdr);
+    fn fill_crop_letterboxes_neither_axis() {
+        // Wide surface over 16:9 video: crop top and bottom.
+        let crop = fill_crop((1920, 1080), (2000, 500));
+        assert_eq!(crop[0], 0.0);
+        assert!((crop[3] - 4.0 / 9.0).abs() < 1e-6);
+        // Tall surface: crop left and right.
+        let crop = fill_crop((1920, 1080), (500, 2000));
+        assert_eq!(crop[1], 0.0);
+        assert!((crop[2] - 9.0 / 64.0).abs() < 1e-6);
     }
 
     #[test]
-    fn hdr_source_maps_to_hdr_on_float_surface() {
-        let mode = shader_target_mode(wgpu::TextureFormat::Rgba16Float, true);
-        assert_eq!(mode, ColorOutputTarget::LinearHdr);
+    fn engine_frame_color_maps_bt709_limited() {
+        let color = engine_frame_color(VideoColorInfo::default())
+            .expect("BT.709 limited is engine-representable");
+        assert_eq!(color.matrix, YuvMatrix::Bt709);
+        assert_eq!(color.range, YuvRange::Video);
+        assert_eq!(color.primaries, Primaries::Bt709);
+        assert_eq!(color.transfer, Transfer::Bt709);
     }
 
     #[test]
-    fn sdr_source_stays_sdr_even_on_float_surface() {
-        let mode = shader_target_mode(wgpu::TextureFormat::Rgba16Float, false);
-        assert_eq!(mode, ColorOutputTarget::LinearSdr);
+    fn engine_frame_color_maps_bt2020_pq() {
+        let color = engine_frame_color(VideoColorInfo {
+            matrix: MatrixCoefficients::Bt2020NonConstantLuminance,
+            primaries: ColorPrimaries::Bt2020,
+            transfer: TransferFunction::Pq,
+            range: ColorRange::Limited,
+            content_light_level: None,
+            dolby_vision: false,
+        })
+        .expect("BT.2020 PQ is engine-representable");
+        assert_eq!(color.matrix, YuvMatrix::Bt2020);
+        assert_eq!(color.primaries, Primaries::Bt2020);
+        assert_eq!(color.transfer, Transfer::Pq);
+    }
+
+    #[test]
+    fn engine_frame_color_maps_hlg_with_nominal_peak() {
+        let color = engine_frame_color(VideoColorInfo {
+            transfer: TransferFunction::Hlg,
+            ..VideoColorInfo::default()
+        })
+        .expect("HLG is engine-representable");
+        assert_eq!(color.transfer, Transfer::Hlg);
+        assert!(color.hlg_peak > 0.0 && color.hlg_peak.is_finite());
+    }
+
+    #[test]
+    fn engine_frame_color_rejects_bt2020_constant_luminance() {
+        assert!(
+            engine_frame_color(VideoColorInfo {
+                matrix: MatrixCoefficients::Bt2020ConstantLuminance,
+                ..VideoColorInfo::default()
+            })
+            .is_none()
+        );
     }
 
     #[test]

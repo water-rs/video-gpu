@@ -8,9 +8,8 @@ mod runtime_player;
 
 use shaderloom::CompiledShader;
 
-const VIDEO_YUV_SHADER: CompiledShader = include!(concat!(env!("OUT_DIR"), "/video_yuv.rs"));
-const VIDEO_YUV_SPHERICAL_SHADER: CompiledShader =
-    include!(concat!(env!("OUT_DIR"), "/video_yuv_spherical.rs"));
+const SPHERICAL_VIDEO_SHADER: CompiledShader =
+    include!(concat!(env!("OUT_DIR"), "/spherical_video.rs"));
 
 #[cfg(target_os = "android")]
 #[doc(hidden)]
