@@ -176,7 +176,7 @@ shaderloom = { git = "https://github.com/water-rs/shaderloom", rev = "84c37c8314
 # The backend pair the merged waterui itself resolves: dev's
 # interaction-state work merged onto the Cherenkov-cutover line, pinned at
 # f2209fb4 like the rest of the engine stack.
-hydrolysis = { git = "https://github.com/water-rs/hydrolysis", rev = "c259f1164e7c1ed3b75ab6a9d64bf3ba686ac6c2" }
+hydrolysis = { git = "https://github.com/water-rs/hydrolysis", rev = "c22e87bd264339e487ef95ac218f06bba67212c0" }
 hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", rev = "0f468a4113744096355d386521f41a4b384bcfb0" }
 waterui-image = { git = "https://github.com/water-rs/image", rev = "27ab17cad98e8b08f50d9df5a66d9ec11529a69f" }
 waterui-svg = { git = "https://github.com/water-rs/svg", rev = "d53a94b03236718c9ee506bd9f5b4b1d2f247a8b" }
