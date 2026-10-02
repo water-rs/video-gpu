@@ -5387,7 +5387,7 @@ impl ExternalFramePresenter {
     /// The uploader's plane-import counters: `(imported, uploaded)`. A
     /// hardware-decoded frame adds to the first only — its planes reach the
     /// engine with no copy.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     fn plane_counters(&self) -> (u64, u64) {
         self.uploader.as_ref().map_or((0, 0), |uploader| {
             (uploader.imported_frames(), uploader.uploaded_frames())
@@ -6064,44 +6064,59 @@ impl Drop for MediaSessionState {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
     use super::{
-        ExternalFramePresenter, PlaybackObservability, PlaybackPolicy, PresentedFrameHistory,
-        SphericalState, VideoColorInfo, VideoWarpContent, Volume, WarpInbox, WarpInboxItem,
-        WarpParams, WarpUniform, effective_audio_volume, engine_frame_color, fill_crop,
-        lock_warp_inbox, next_audio_selection, next_subtitle_selection, next_video_selection,
-        playback_clock_position, progress_for_position, resolve_selected_subtitle_index,
-        runtime_sidecar_subtitle_tracks, runtime_subtitle_track_info,
-        segmented_subtitle_track_selection, select_default_subtitle_track_index,
-        select_live_catch_up_rate, should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
+        ExternalFramePresenter, VideoWarpContent, WarpInbox, WarpInboxItem, lock_warp_inbox,
+    };
+    use super::{
+        PlaybackObservability, PlaybackPolicy, PresentedFrameHistory, SphericalState,
+        VideoColorInfo, Volume, WarpParams, WarpUniform, effective_audio_volume,
+        engine_frame_color, fill_crop, next_audio_selection, next_subtitle_selection,
+        next_video_selection, playback_clock_position, progress_for_position,
+        resolve_selected_subtitle_index, runtime_sidecar_subtitle_tracks,
+        runtime_subtitle_track_info, segmented_subtitle_track_selection,
+        select_default_subtitle_track_index, select_live_catch_up_rate,
+        should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
         subtitle_track_info_labels, take_due_timed_metadata,
     };
     use std::{
         cell::RefCell,
         fs,
         num::NonZeroU64,
-        path::{Path, PathBuf},
-        process::Command,
+        path::Path,
         rc::Rc,
-        sync::{Arc, Mutex, mpsc},
+        sync::mpsc,
         time::{Duration, Instant},
     };
+    #[cfg(target_os = "macos")]
+    use std::{
+        path::PathBuf,
+        process::Command,
+        sync::{Arc, Mutex},
+    };
     use waterkit_codec::DecodedPixelLayout;
+    #[cfg(target_os = "macos")]
+    use waterkit_video::VideoPlayer;
     use waterkit_video::{
         ColorPrimaries, ColorRange, ContentLightLevel, MatrixCoefficients,
         SubtitleTrackSelection as EngineSubtitleTrackSelection,
-        TimedMetadata as EngineTimedMetadata, TransferFunction, VideoPlayer,
+        TimedMetadata as EngineTimedMetadata, TransferFunction,
     };
+    #[cfg(target_os = "macos")]
+    use waterui_graphics::gpu::GpuContentRenderer;
     use waterui_graphics::{
         ExternalFrameSource, ExternalFrameView, FrameOutput, RedrawHandle,
         cherenkov::{Display, Readback},
         cherenkov_gpu::interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
-        gpu::{ExternalFrameRenderer, GpuContentRenderer, GpuRuntime},
+        gpu::{ExternalFrameRenderer, GpuRuntime},
         offscreen::{OffscreenImage, OffscreenSize},
     };
     use waterui_video::{
-        AudioTrackSelection, EquirectangularProjection, SphericalStereoLayout, SphericalViewport,
-        SubtitleSelection, SubtitleTrack, VideoTrackSelection,
+        AudioTrackSelection, SphericalStereoLayout, SubtitleSelection, SubtitleTrack,
+        VideoTrackSelection,
     };
+    #[cfg(target_os = "macos")]
+    use waterui_video::{EquirectangularProjection, SphericalViewport};
 
     const VISUAL_WIDTH: u32 = 320;
     const VISUAL_HEIGHT: u32 = 180;
@@ -6471,6 +6486,7 @@ mod tests {
 
     /// Presents a real decoded frame through [`ExternalFramePresenter`] and
     /// the view's engine layer, then reads the composited host target.
+    #[cfg(target_os = "macos")]
     fn export_playback_frame(
         runtime: &GpuRuntime,
         output_dir: &Path,
@@ -6522,6 +6538,7 @@ mod tests {
 
     /// Draws a real decoded frame through [`VideoWarpContent`]'s spherical
     /// pipeline into a host target.
+    #[cfg(target_os = "macos")]
     fn export_spherical_video_visual(runtime: &GpuRuntime, output_dir: &Path, clip: &Path) {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
@@ -6565,6 +6582,7 @@ mod tests {
     }
 
     /// Encodes a short color-bar clip, or `None` when no ffmpeg is installed.
+    #[cfg(target_os = "macos")]
     fn encode_clip(file_name: &str, args: &[&str]) -> Option<PathBuf> {
         let path = std::env::temp_dir().join(file_name);
         let status = Command::new("ffmpeg")
