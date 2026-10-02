@@ -6065,18 +6065,16 @@ impl Drop for MediaSessionState {
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
-    use super::{
-        ExternalFramePresenter, VideoWarpContent, WarpInbox, WarpInboxItem, lock_warp_inbox,
-    };
+    use super::{ExternalFramePresenter, WarpInboxItem};
     use super::{
         PlaybackObservability, PlaybackPolicy, PresentedFrameHistory, SphericalState,
-        VideoColorInfo, Volume, WarpParams, WarpUniform, effective_audio_volume,
-        engine_frame_color, fill_crop, next_audio_selection, next_subtitle_selection,
-        next_video_selection, playback_clock_position, progress_for_position,
-        resolve_selected_subtitle_index, runtime_sidecar_subtitle_tracks,
-        runtime_subtitle_track_info, segmented_subtitle_track_selection,
-        select_default_subtitle_track_index, select_live_catch_up_rate,
-        should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
+        VideoColorInfo, VideoWarpContent, Volume, WarpInbox, WarpParams, WarpUniform,
+        effective_audio_volume, engine_frame_color, fill_crop, lock_warp_inbox,
+        next_audio_selection, next_subtitle_selection, next_video_selection,
+        playback_clock_position, progress_for_position, resolve_selected_subtitle_index,
+        runtime_sidecar_subtitle_tracks, runtime_subtitle_track_info,
+        segmented_subtitle_track_selection, select_default_subtitle_track_index,
+        select_live_catch_up_rate, should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
         subtitle_track_info_labels, take_due_timed_metadata,
     };
     use std::{
@@ -6085,15 +6083,11 @@ mod tests {
         num::NonZeroU64,
         path::Path,
         rc::Rc,
-        sync::mpsc,
+        sync::{Arc, Mutex, mpsc},
         time::{Duration, Instant},
     };
     #[cfg(target_os = "macos")]
-    use std::{
-        path::PathBuf,
-        process::Command,
-        sync::{Arc, Mutex},
-    };
+    use std::{path::PathBuf, process::Command};
     use waterkit_codec::DecodedPixelLayout;
     #[cfg(target_os = "macos")]
     use waterkit_video::VideoPlayer;
@@ -6102,21 +6096,17 @@ mod tests {
         SubtitleTrackSelection as EngineSubtitleTrackSelection,
         TimedMetadata as EngineTimedMetadata, TransferFunction,
     };
-    #[cfg(target_os = "macos")]
-    use waterui_graphics::gpu::GpuContentRenderer;
     use waterui_graphics::{
         ExternalFrameSource, ExternalFrameView, FrameOutput, RedrawHandle,
         cherenkov::{Display, Readback},
         cherenkov_gpu::interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
-        gpu::{ExternalFrameRenderer, GpuRuntime},
+        gpu::{ExternalFrameRenderer, GpuContentRenderer, GpuRuntime},
         offscreen::{OffscreenImage, OffscreenSize},
     };
     use waterui_video::{
-        AudioTrackSelection, SphericalStereoLayout, SubtitleSelection, SubtitleTrack,
-        VideoTrackSelection,
+        AudioTrackSelection, EquirectangularProjection, SphericalStereoLayout, SphericalViewport,
+        SubtitleSelection, SubtitleTrack, VideoTrackSelection,
     };
-    #[cfg(target_os = "macos")]
-    use waterui_video::{EquirectangularProjection, SphericalViewport};
 
     const VISUAL_WIDTH: u32 = 320;
     const VISUAL_HEIGHT: u32 = 180;
@@ -6536,33 +6526,17 @@ mod tests {
             .expect("playback frame PNG must be saved");
     }
 
-    /// Draws a real decoded frame through [`VideoWarpContent`]'s spherical
-    /// pipeline into a host target.
-    #[cfg(target_os = "macos")]
-    fn export_spherical_video_visual(runtime: &GpuRuntime, output_dir: &Path, clip: &Path) {
-        let context = runtime.context();
-        let (device, queue) = (context.device(), context.queue());
-        let mut player = VideoPlayer::open(clip).expect("the spherical clip must open");
-        let decoded = player
-            .next_frame()
-            .expect("the spherical clip must decode")
-            .expect("the spherical clip has a first frame");
-        let projection = EquirectangularProjection::new(SphericalViewport::new(25.0, 30.0, 100.0))
-            .stereo_layout(SphericalStereoLayout::Mono);
+    /// The equirectangular viewport every spherical visual draws.
+    fn spherical_visual_projection() -> EquirectangularProjection {
+        EquirectangularProjection::new(SphericalViewport::new(25.0, 30.0, 100.0))
+            .stereo_layout(SphericalStereoLayout::Mono)
+    }
+
+    /// A [`VideoWarpContent`] wired to an empty inbox.
+    fn spherical_warp_content() -> (Arc<Mutex<WarpInbox>>, VideoWarpContent) {
         let inbox = Arc::new(Mutex::new(WarpInbox::default()));
-        {
-            let mut slot = lock_warp_inbox(&inbox);
-            slot.params = WarpParams {
-                video_size: (decoded.width().max(1), decoded.height().max(1)),
-                spherical: Some(SphericalState::read(&projection)),
-            };
-            slot.item = Some(WarpInboxItem {
-                serial: 1,
-                frame: decoded,
-            });
-        }
-        let warp_content = VideoWarpContent {
-            inbox,
+        let content = VideoWarpContent {
+            inbox: Arc::clone(&inbox),
             pipeline: None,
             sampler: None,
             params: None,
@@ -6571,14 +6545,140 @@ mod tests {
             frame: None,
             presented_serial: 0,
         };
+        (inbox, content)
+    }
+
+    /// Renders `warp_content` into a host target and saves the readback.
+    fn render_warp_visual(
+        runtime: &GpuRuntime,
+        output_dir: &Path,
+        file_name: &str,
+        warp_content: VideoWarpContent,
+    ) {
+        let context = runtime.context();
+        let (device, queue) = (context.device(), context.queue());
         let mut view = waterui_graphics::GpuContentView::new(warp_content);
         let boxed = view.take_engine_content(|| {});
         let mut renderer = GpuContentRenderer::new(runtime, boxed, visual_size());
         let target = host_target(device);
         renderer.present(&target, DISPLAY);
         read_target(device, queue, &target)
-            .save_png(output_dir.join("nv12_equirectangular_mono.after.png"))
+            .save_png(output_dir.join(file_name))
             .expect("spherical video visual PNG must be saved");
+    }
+
+    /// Limited-range BT.709 code values to linear sRGB — the same decode
+    /// `LinearRgbaConverter`'s `convert_to_linear_rgba` shader applies.
+    fn bt709_limited_to_linear(y: u16, u: u16, v: u16) -> [f32; 3] {
+        let y = (f32::from(y) - 16.0) / 219.0;
+        let u = (f32::from(u) - 128.0) / 224.0;
+        let v = (f32::from(v) - 128.0) / 224.0;
+        let to_linear = |c: f32| {
+            if c < 0.081 {
+                c / 4.5
+            } else {
+                ((c + 0.099) / 1.099).powf(1.0 / 0.45)
+            }
+        };
+        [
+            to_linear(v.mul_add(1.5748, y)),
+            to_linear(u.mul_add(-0.1873, v.mul_add(-0.4681, y))),
+            to_linear(u.mul_add(1.8556, y)),
+        ]
+    }
+
+    /// The visual color bars as the linear RGBA16F frame
+    /// [`LinearRgbaConverter`] emits for a BT.709 SDR clip. Neither a
+    /// `DecodedVideoFrame` nor a `GpuFrame` can be built outside the
+    /// codec, so the warp content's converted frame is synthesized here.
+    fn create_visual_linear_frame(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("spherical visual frame"),
+            size: wgpu::Extent3d {
+                width: VISUAL_WIDTH,
+                height: VISUAL_HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let mut pixels = Vec::with_capacity((VISUAL_WIDTH * VISUAL_HEIGHT * 8) as usize);
+        for _ in 0..VISUAL_HEIGHT {
+            for x in 0..VISUAL_WIDTH {
+                let (y, u, v) = LIMITED_COLOR_BARS[color_bar_index(x)];
+                for channel in bt709_limited_to_linear(y, u, v) {
+                    pixels.extend_from_slice(&half::f16::from_f32(channel).to_le_bytes());
+                }
+                pixels.extend_from_slice(&half::f16::from_f32(1.0).to_le_bytes());
+            }
+        }
+        queue.write_texture(
+            texture.as_image_copy(),
+            &pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(VISUAL_WIDTH * 8),
+                rows_per_image: Some(VISUAL_HEIGHT),
+            },
+            texture.size(),
+        );
+        texture
+    }
+
+    /// Draws a synthetic frame through [`VideoWarpContent`]'s spherical
+    /// pipeline into a host target: the same bars as the NV12 visual,
+    /// through the same projection a decoded clip takes.
+    fn export_spherical_video_visual(runtime: &GpuRuntime, output_dir: &Path) {
+        let context = runtime.context();
+        let (device, queue) = (context.device(), context.queue());
+        let (inbox, mut warp_content) = spherical_warp_content();
+        {
+            let mut slot = lock_warp_inbox(&inbox);
+            slot.params = WarpParams {
+                video_size: (VISUAL_WIDTH, VISUAL_HEIGHT),
+                spherical: Some(SphericalState::read(&spherical_visual_projection())),
+            };
+        }
+        warp_content.frame = Some(create_visual_linear_frame(device, queue));
+        render_warp_visual(
+            runtime,
+            output_dir,
+            "nv12_equirectangular_mono.png",
+            warp_content,
+        );
+    }
+
+    /// Draws a real decoded frame through [`VideoWarpContent`]'s spherical
+    /// pipeline into a host target.
+    #[cfg(target_os = "macos")]
+    fn export_spherical_playback_visual(runtime: &GpuRuntime, output_dir: &Path, clip: &Path) {
+        let mut player = VideoPlayer::open(clip).expect("the spherical clip must open");
+        let decoded = player
+            .next_frame()
+            .expect("the spherical clip must decode")
+            .expect("the spherical clip has a first frame");
+        let (inbox, warp_content) = spherical_warp_content();
+        {
+            let mut slot = lock_warp_inbox(&inbox);
+            slot.params = WarpParams {
+                video_size: (decoded.width().max(1), decoded.height().max(1)),
+                spherical: Some(SphericalState::read(&spherical_visual_projection())),
+            };
+            slot.item = Some(WarpInboxItem {
+                serial: 1,
+                frame: decoded,
+            });
+        }
+        render_warp_visual(
+            runtime,
+            output_dir,
+            "nv12_equirectangular_mono.after.png",
+            warp_content,
+        );
     }
 
     /// Encodes a short color-bar clip, or `None` when no ffmpeg is installed.
@@ -6627,7 +6727,7 @@ mod tests {
             "playback_bt709_sdr.after.png",
             15,
         );
-        export_spherical_video_visual(&runtime, output_dir, &sdr_clip);
+        export_spherical_playback_visual(&runtime, output_dir, &sdr_clip);
 
         if let Some(hdr_clip) = encode_clip(
             "waterui_video_hdr_p010.mp4",
@@ -6686,6 +6786,7 @@ mod tests {
                 dolby_vision: false,
             },
         );
+        export_spherical_video_visual(&runtime, output_dir);
     }
 
     #[test]
