@@ -2,12 +2,26 @@
 
 #[cfg(target_os = "android")]
 mod android_video_surface;
+#[cfg(feature = "gpu")]
 mod decoder_worker;
+#[cfg(feature = "gpu")]
 mod latest_channel;
+#[cfg(feature = "gpu")]
 mod runtime_player;
 
+#[cfg(feature = "gpu")]
 use shaderloom::CompiledShader;
+// `include_compiled_spirv!` names `wgpu` at the expansion site on non-Apple,
+// non-wasm targets; the re-export keeps it resolving without a direct `wgpu`
+// dependency.
+#[cfg(all(
+    feature = "gpu",
+    not(target_vendor = "apple"),
+    not(target_arch = "wasm32")
+))]
+use waterui_graphics::wgpu;
 
+#[cfg(feature = "gpu")]
 const SPHERICAL_VIDEO_SHADER: CompiledShader =
     include!(concat!(env!("OUT_DIR"), "/spherical_video.rs"));
 
@@ -17,7 +31,9 @@ pub use android_video_surface::{AndroidVideoSurfaceBridge, AndroidVideoSurfaceHo
 
 use waterkit_audio::{AudioDevice, AudioOutput, PlayerError};
 use waterkit_video::{AnyLicenseServer, LicenseServer, ZenwaveLicenseServer};
-use waterui_core::{Binding, Environment};
+use waterui_core::Binding;
+#[cfg(feature = "gpu")]
+use waterui_core::Environment;
 
 /// Backend configuration for self-drawn video playback.
 #[derive(Debug, Clone)]
@@ -92,11 +108,19 @@ pub fn audio_output_devices() -> Result<Vec<AudioDevice>, PlayerError> {
 
 /// Installs the self-drawn [`waterui_video::Video`] and
 /// [`waterui_video::VideoPlayer`] realization into an environment.
+///
+/// Available with the `gpu` feature: the player presents through
+/// `GpuContent` and `ExternalFrame`, which are Cherenkov-only capabilities
+/// reached through `waterui-graphics`' `gpu` feature.
+#[cfg(feature = "gpu")]
 pub fn install(env: &mut Environment) {
     install_with_options(env, VideoGpuOptions::new());
 }
 
 /// Installs the self-drawn video realization with backend-specific options.
+///
+/// Available with the `gpu` feature, like [`install`].
+#[cfg(feature = "gpu")]
 pub fn install_with_options(env: &mut Environment, options: VideoGpuOptions) {
     runtime_player::install(env, options);
 }

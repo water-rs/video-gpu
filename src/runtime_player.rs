@@ -61,6 +61,7 @@ use waterui_graphics::cherenkov_gpu::interop::{
     ChromaSiting, ExternalFrame, FrameColor, Primaries, RgbAlpha, Transfer, YuvMatrix, YuvRange,
 };
 use waterui_graphics::gpu::RetiredOutput;
+use waterui_graphics::wgpu;
 use waterui_graphics::{
     Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
     Frame as GpuContentFrame, FrameOutput, GpuContent, GpuContentView, RedrawHandle,
@@ -6102,6 +6103,7 @@ mod tests {
         cherenkov_gpu::interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
         gpu::{ExternalFrameRenderer, GpuContentRenderer, GpuRuntime},
         offscreen::{OffscreenImage, OffscreenSize},
+        wgpu,
     };
     use waterui_video::{
         AudioTrackSelection, EquirectangularProjection, SphericalStereoLayout, SphericalViewport,
@@ -6454,6 +6456,7 @@ mod tests {
         let (view, outputs) = output_probe();
         let mut renderer = ExternalFrameRenderer::new(
             runtime,
+            context.clone(),
             &view.stream(),
             visual_size(),
             RedrawHandle::new(|| {}),
@@ -6489,6 +6492,7 @@ mod tests {
         let (view, outputs) = output_probe();
         let mut renderer = ExternalFrameRenderer::new(
             runtime,
+            context.clone(),
             &view.stream(),
             visual_size(),
             RedrawHandle::new(|| {}),
@@ -6559,7 +6563,7 @@ mod tests {
         let (device, queue) = (context.device(), context.queue());
         let mut view = waterui_graphics::GpuContentView::new(warp_content);
         let boxed = view.take_engine_content(|| {});
-        let mut renderer = GpuContentRenderer::new(runtime, boxed, visual_size());
+        let mut renderer = GpuContentRenderer::new(runtime, context.clone(), boxed, visual_size());
         let target = host_target(device);
         renderer.present(&target, DISPLAY);
         read_target(device, queue, &target)

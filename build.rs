@@ -4,6 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // The shader is only referenced by the `gpu` feature's runtime player;
+    // the engine-free build skips the compile.
+    if std::env::var_os("CARGO_FEATURE_GPU").is_none() {
+        return;
+    }
     let spherical_path =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"))
             .join("src/shaders/spherical_video_render.wgsl");
