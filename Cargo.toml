@@ -106,8 +106,8 @@ filtrate-derive = { git = "https://github.com/water-rs/waterui", rev = "0b982961
 # wgpu 30.0.1's Metal backend reads the address of the kCGColorSpace* globals
 # instead of their value and crashes in CGColorSpaceCreateWithName whenever a
 # surface negotiates Extended Display P3 or BT.2100 (gfx-rs/wgpu#10175, fixed on
-# trunk, not yet released for v30). Mirrored from the framework's own patch
-# table (itself mirrored from water-rs/cherenkov#229): `[patch]` in a
+# trunk, not yet released for v30). Mirrored from water-rs/waterui's own
+# `[patch.crates-io]` at the pinned revision: `[patch]` in a
 # dependency's manifest does not apply downstream, so without these entries
 # this graph resolves the crashing crates.io build while cherenkov resolves
 # the fork. Drop them once wgpu-hal 30.0.2 ships the backport.
