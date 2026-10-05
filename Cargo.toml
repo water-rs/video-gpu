@@ -28,16 +28,6 @@ cargo = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
 multiple_crate_versions = "allow"
 
-[features]
-default = []
-# The player presents through `GpuContent` and `ExternalFrame`, capabilities
-# `waterui-graphics` gates behind `gpu` (`cherenkov-gpu`, `wgpu`, the filtrate
-# executor and shader paints — the Cherenkov engine). The default build
-# carries only the engine-free surface — `VideoGpuOptions` and the audio
-# device list — and links no engine; `install` and the runtime player exist
-# with this feature.
-gpu = ["waterui-graphics/gpu", "dep:shaderloom", "waterkit-codec/gpu"]
-
 [dependencies]
 async-channel = "2.5"
 futures-timer = "3"
@@ -48,11 +38,11 @@ waterui-video = { version = "0.5.1" }
 waterui-core = { version = "0.5.1" }
 waterui-layout = { version = "0.5.1" }
 waterui-controls = { version = "0.5.1" }
-waterui-graphics = { version = "0.5.1", default-features = false }
-shaderloom = { version = "0.1.2", optional = true, default-features = false, features = ["runtime"] }
+waterui-graphics = { version = "0.5.1", features = ["gpu"] }
+shaderloom = { version = "0.1.2", default-features = false, features = ["runtime"] }
 waterui-text = { version = "0.5.1" }
 waterkit-video = { version = "0.1.4", features = ["streaming"] }
-waterkit-codec = { version = "0.1.4", default-features = false, features = ["software-decode"] }
+waterkit-codec = { version = "0.1.4", default-features = false, features = ["gpu", "software-decode"] }
 waterkit-audio = { version = "0.1.4", features = ["streaming"] }
 waterkit-fs = { version = "0.1.4" }
 futures = "0.3"
@@ -78,9 +68,6 @@ uuid = { version = "1.26.0", features = ["js"] }
 half = "2.4"
 hydrolysis-m3 = "0.3.1"
 pollster = "1.0"
-# The `gpu` feature adds the renderers the test modules drive —
-# `GpuContentRenderer`, `ExternalFrameRenderer` and `GpuRuntime`.
-waterui-graphics = { version = "0.5.1", features = ["gpu"] }
 waterui = { version = "0.5.2", features = ["video-gpu"] }
 waterui-testing = "0.5.1"
 
