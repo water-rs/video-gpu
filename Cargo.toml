@@ -47,7 +47,7 @@ waterkit-audio = { version = "0.1.4", features = ["streaming"] }
 waterkit-fs = { version = "0.1.4" }
 futures = "0.3"
 executor-core = "0.7.1"
-nami = "=0.11.1"
+nami = "0.12"
 num-traits = { version = "0.2", default-features = false }
 tracing = "0.1.44"
 uuid = "1.26.0"
