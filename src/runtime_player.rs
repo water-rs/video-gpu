@@ -6568,9 +6568,15 @@ mod tests {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
         let mut view = waterui_graphics::GpuContentView::new(warp_content);
-        let boxed = view.take_engine_content(|| {});
-        let mut renderer = GpuContentRenderer::new(runtime, context.clone(), boxed, visual_size())
-            .expect("the GPU content renderer settles");
+        let boxed = view.take_engine_content();
+        let mut renderer = GpuContentRenderer::new(
+            runtime,
+            context.clone(),
+            boxed,
+            visual_size(),
+            RedrawHandle::new(|| {}),
+        )
+        .expect("the GPU content renderer settles");
         let target = host_target(device);
         renderer
             .present(&target, DISPLAY, FrameTime(std::time::Instant::now()))
