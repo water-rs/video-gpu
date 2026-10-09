@@ -2281,7 +2281,6 @@ impl PictureInPictureCommands {
 
 struct VideoRenderer {
     picture_in_picture_host_id: PictureInPictureHostId,
-    picture_in_picture_controller: PictureInPictureController,
     controller: PlayerController,
     playback: PlaybackUiBindings,
     source_signal: Computed<RuntimeMediaItem>,
@@ -2626,9 +2625,6 @@ impl VideoRenderer {
 
         Self {
             picture_in_picture_host_id,
-            picture_in_picture_controller: PictureInPictureController::new(
-                picture_in_picture_host_id,
-            ),
             controller,
             playback,
             source_signal: source,
@@ -4856,11 +4852,19 @@ impl VideoRenderer {
         }
 
         let aspect_ratio = self.current_video_dimensions();
-        if let Err(error) = self.picture_in_picture_controller.enter(aspect_ratio) {
-            self.emit_event(Event::Error {
-                message: error.to_string(),
-            });
-        }
+        // `enter` awaits a main-thread hop on Apple, so it runs as a detached
+        // task on the local executor rather than blocking this synchronous pump.
+        let host_id = self.picture_in_picture_host_id;
+        let updates = self.ui_updates.updates.clone();
+        spawn_local(async move {
+            let mut controller = PictureInPictureController::new(host_id);
+            if let Err(error) = controller.enter(aspect_ratio).await {
+                let _ = updates.try_send(UiUpdate::Event(Event::Error {
+                    message: error.to_string(),
+                }));
+            }
+        })
+        .detach();
     }
 
     fn picture_in_picture_controller_state(
@@ -4883,27 +4887,66 @@ impl VideoRenderer {
             return;
         }
         self.last_picture_in_picture_controller_state = Some(state);
+        self.dispatch_picture_in_picture_sync(state, false);
+    }
 
-        if let Err(error) = self.picture_in_picture_controller.sync(state) {
-            self.emit_event(Event::Error {
-                message: error.to_string(),
-            });
+    /// Delivers a `PictureInPictureController::sync` for this host.
+    ///
+    /// On Apple `sync` asserts the process main thread — true for the
+    /// renderer's local executor in a running app but not under the headless
+    /// test harness — so the call is routed through waterkit's main-queue hop
+    /// in a detached task. `log_only` reports failures through `tracing` for
+    /// teardown, when the UI update channel is already going away.
+    fn dispatch_picture_in_picture_sync(
+        &self,
+        state: PictureInPictureControllerState,
+        log_only: bool,
+    ) {
+        #[cfg(any(target_os = "ios", target_os = "macos"))]
+        {
+            let host_id = self.picture_in_picture_host_id;
+            let updates = self.ui_updates.updates.clone();
+            spawn_local(async move {
+                let mut controller = PictureInPictureController::new(host_id);
+                if let Err(error) =
+                    waterkit_core::apple::on_main(move |_| controller.sync(state)).await
+                {
+                    if log_only {
+                        tracing::error!(%error, "failed to clear picture-in-picture controller");
+                    } else {
+                        let _ = updates.try_send(UiUpdate::Event(Event::Error {
+                            message: error.to_string(),
+                        }));
+                    }
+                }
+            })
+            .detach();
+        }
+        #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+        if let Err(error) =
+            PictureInPictureController::new(self.picture_in_picture_host_id).sync(state)
+        {
+            if log_only {
+                tracing::error!(%error, "failed to clear picture-in-picture controller");
+            } else {
+                self.emit_event(Event::Error {
+                    message: error.to_string(),
+                });
+            }
         }
     }
 
     fn clear_picture_in_picture_controller(&mut self) {
         self.last_picture_in_picture_controller_state = None;
-        let result = self
-            .picture_in_picture_controller
-            .sync(PictureInPictureControllerState::new(
+        self.dispatch_picture_in_picture_sync(
+            PictureInPictureControllerState::new(
                 self.picture_in_picture_host_id,
                 false,
                 false,
                 None,
-            ));
-        if let Err(error) = result {
-            tracing::error!(%error, "failed to clear picture-in-picture controller");
-        }
+            ),
+            true,
+        );
     }
 
     fn emit_picture_in_picture_changed(&mut self, active: bool) {
@@ -4921,15 +4964,16 @@ impl VideoRenderer {
             return;
         }
         self.next_picture_in_picture_status_poll = now + PICTURE_IN_PICTURE_STATUS_POLL_INTERVAL;
-        let active = match self.picture_in_picture_controller.is_active() {
-            Ok(active) => active,
-            Err(error) => {
-                self.emit_event(Event::Error {
-                    message: error.to_string(),
-                });
-                return;
-            }
-        };
+        let active =
+            match PictureInPictureController::new(self.picture_in_picture_host_id).is_active() {
+                Ok(active) => active,
+                Err(error) => {
+                    self.emit_event(Event::Error {
+                        message: error.to_string(),
+                    });
+                    return;
+                }
+            };
         self.emit_picture_in_picture_changed(active);
     }
 
