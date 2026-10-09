@@ -58,6 +58,9 @@ shaderloom = { version = "0.2.1", default-features = false, features = ["build"]
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22.4"
 
+[target.'cfg(target_vendor = "apple")'.dependencies]
+waterkit-core = { version = "0.1.4" }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 waterkit-audio = { version = "0.1.4", features = ["he-aac"] }
 
@@ -160,20 +163,20 @@ waterui-webview = { git = "https://github.com/water-rs/waterui", rev = "59874864
 # `DecodedFrameUploader` produces the integer NV12/P010 planes
 # `ExternalFrame::yuv` imports and imports CVPixelBuffers through Metal on
 # Apple, in place.
-waterkit-audio = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-build = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-clipboard = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-codec = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-core = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-dialog = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-fs = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-location = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-permission = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-video = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-video-container = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-video-core = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-video-player = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
-waterkit-video-streaming = { git = "https://github.com/water-rs/waterkit", rev = "23bca68e20b88a6b95b083c5b7d198cb51ed8313" }
+waterkit-audio = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-build = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-clipboard = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-codec = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-core = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-dialog = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-fs = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-location = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-permission = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-video = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-video-container = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-video-core = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-video-player = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
+waterkit-video-streaming = { git = "https://github.com/water-rs/waterkit", rev = "c3ea2a5ad27c6e4eae2168d7e595389b570b6b33" }
 
 # Split components at the revisions the framework's own patch table pins —
 # each records through `waterui_graphics::draw` against this contract.
