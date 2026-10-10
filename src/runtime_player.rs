@@ -75,12 +75,13 @@ use waterui_text::Text;
 
 use waterui_video::video::VideoEventHandler;
 use waterui_video::{
-    AudioTrackInfo, AudioTrackSelection, ContentMode, Delivery, DrmConfiguration,
+    AudioTrackInfo, AudioTrackSelection, ContentMode, DEFAULT_ASPECT, Delivery, DrmConfiguration,
     EquirectangularProjection, Event, LiveWindow, MediaItem, PlaybackConfiguration,
     PlaybackMetrics, PlaybackOutputPath, PlaybackPhase, PlaybackPolicy, PlaybackPowerPolicy,
     PlayerController, RepeatMode, SphericalStereoLayout, SphericalViewport, SubtitleSelection,
     SubtitleTrack, SubtitleTrackInfo, SubtitleTrackOrigin, TimedMetadata, TrackCatalog, Url,
     VideoConfig, VideoPlayerConfig, VideoProjection, VideoTrackInfo, VideoTrackSelection, Volume,
+    fit_video,
 };
 
 use crate::VideoGpuOptions;
@@ -149,6 +150,67 @@ fn u32_to_f32(value: u32, name: &str) -> f32 {
     value
         .to_f32()
         .unwrap_or_else(|| panic!("{name} must fit into f32"))
+}
+
+/// The width a video answers to an unspecified width proposal before its
+/// source reports its size.
+const FALLBACK_WIDTH: f32 = 320.0;
+
+/// The height a video answers to an unspecified height proposal before its
+/// source reports its size.
+const FALLBACK_HEIGHT: f32 = FALLBACK_WIDTH / DEFAULT_ASPECT;
+
+/// A picture that fills the proposal on both axes, 320 × 180 on an
+/// unspecified axis: how `Fill` and `Stretch` answer, and how a `Fit` picture
+/// fills the size its [`fit_video`] layout gives it.
+fn fill_proposal(proposal: ProposalSize) -> ViewDimensions {
+    ViewDimensions::new(Size::new(
+        proposal.width.unwrap_or(FALLBACK_WIDTH),
+        proposal.height.unwrap_or(FALLBACK_HEIGHT),
+    ))
+}
+
+/// The source's size as the layout reads it: the aspect ratio a `Fit` video
+/// answers by, and its natural width — the source's pixel width taken as
+/// points.
+#[derive(Clone)]
+struct VideoSizeBindings {
+    aspect: Binding<f32>,
+    natural_width: Binding<Option<f32>>,
+    reported: Rc<Cell<Option<(u32, u32)>>>,
+}
+
+impl VideoSizeBindings {
+    fn new() -> Self {
+        Self {
+            aspect: binding(DEFAULT_ASPECT),
+            natural_width: binding(None),
+            reported: Rc::new(Cell::new(None)),
+        }
+    }
+
+    /// Publishes the source's pixel dimensions, `None` until it reports them.
+    fn report(&self, dimensions: Option<(u32, u32)>) {
+        if self.reported.replace(dimensions) == dimensions {
+            return;
+        }
+        let (aspect, natural_width) =
+            dimensions.map_or((DEFAULT_ASPECT, None), |(width, height)| {
+                let width = u32_to_f32(width, "video width");
+                (width / u32_to_f32(height, "video height"), Some(width))
+            });
+        self.aspect.set(aspect);
+        self.natural_width.set(natural_width);
+    }
+
+    /// `picture` laid out as a `Fit` video sized by these bindings.
+    fn fit(&self, picture: impl View) -> AnyView {
+        AnyView::new(fit_video(
+            picture,
+            self.aspect.clone().into(),
+            self.natural_width.clone().into(),
+        ))
+    }
 }
 
 fn usize_to_f64(value: usize, name: &str) -> f64 {
@@ -1946,7 +2008,12 @@ impl fmt::Debug for VideoSurface {
 impl View for VideoSurface {
     fn body(self, _env: &Environment) -> impl View {
         let spherical = self.renderer.borrow().projection.is_spherical();
-        let fill = matches!(self.renderer.borrow().content_mode, ContentMode::Fill);
+        let content_mode = self.renderer.borrow().content_mode;
+        let fill = matches!(content_mode, ContentMode::Fill);
+        // A spherical video is a viewport into its sphere and has no picture
+        // aspect to keep, so it fills its proposal in every content mode.
+        let fit = (content_mode == ContentMode::Fit && !spherical)
+            .then(|| self.renderer.borrow().size.clone());
         // Planar video presents as the view's own engine layer through an
         // external frame: decoded planes are sampled in place, eligible for
         // system-compositor promotion. Spherical projection and aspect-fill
@@ -1975,10 +2042,14 @@ impl View for VideoSurface {
             surface,
             self.android_surface_bridge,
         ));
-        IgnorableMetadata::new(
+        let picture = IgnorableMetadata::new(
             IgnorableMetadata::new(surface, AccessibilityRole::Image),
             AccessibilityLabel::new("Video content"),
-        )
+        );
+        match fit {
+            Some(size) => size.fit(picture),
+            None => AnyView::new(picture),
+        }
     }
 }
 
@@ -2343,6 +2414,7 @@ struct VideoRenderer {
     media_command_poller: Option<RedrawCommandPoller<MediaCommand>>,
     picture_in_picture_commands: PictureInPictureCommands,
     pump_wake_receiver: Option<AsyncReceiver<()>>,
+    size: VideoSizeBindings,
     pump_wake_redraw: RedrawHandle,
     playback_flags: PlaybackFlags,
     playback_anchor_pts: Duration,
@@ -2689,6 +2761,7 @@ impl VideoRenderer {
             media_command_poller: None,
             picture_in_picture_commands: PictureInPictureCommands::new(picture_in_picture_host_id),
             pump_wake_receiver: Some(pump_wake_receiver),
+            size: VideoSizeBindings::new(),
             pump_wake_redraw,
             playback_flags: PlaybackFlags::default(),
             playback_anchor_pts: Duration::ZERO,
@@ -2857,6 +2930,13 @@ impl VideoRenderer {
                     break;
                 };
                 this.borrow_mut().step_playback();
+                // Reported outside the renderer's borrow: a size change lays
+                // the video out again, and measuring reads the renderer.
+                let (size, dimensions) = {
+                    let renderer = this.borrow();
+                    (renderer.size.clone(), renderer.current_video_dimensions())
+                };
+                size.report(dimensions);
             }
         })
         .detach();
@@ -5209,15 +5289,9 @@ impl VideoRenderer {
             .or(self.video_dimensions)
     }
 
-    fn current_video_aspect_ratio(&self) -> Option<f32> {
-        self.current_video_dimensions().map(|(width, height)| {
-            u32_to_f32(width, "video width") / u32_to_f32(height, "video height")
-        })
-    }
-
-    /// Measures the surface against a layout proposal, matching the previous
-    /// renderer's sizing: spherical projection and forced dimensions fill the
-    /// proposal, `ContentMode::Fit` answers with the video's aspect ratio.
+    /// Measures the surface against a layout proposal. The picture fills it:
+    /// a `Fit` video's aspect ratio is kept by the [`fit_video`] layout around
+    /// the surface, which proposes exactly the size the ratio gives.
     fn measure(&self, proposal: ProposalSize) -> ViewDimensions {
         if let (Some(width), Some(height)) = (proposal.width, proposal.height) {
             self.viewport.set(Some((
@@ -5225,36 +5299,7 @@ impl VideoRenderer {
                 height.max(0.0).to_u32().unwrap_or(u32::MAX),
             )));
         }
-        if self.projection.is_spherical() || self.content_mode != ContentMode::Fit {
-            return ViewDimensions::new(Size::new(
-                proposal.width.unwrap_or(0.0),
-                proposal.height.unwrap_or(0.0),
-            ));
-        }
-
-        let ratio = self.current_video_aspect_ratio();
-        let Some(ratio) = ratio else {
-            return ViewDimensions::new(Size::new(
-                proposal.width.unwrap_or(0.0),
-                proposal.height.unwrap_or(0.0),
-            ));
-        };
-
-        match (proposal.width, proposal.height) {
-            (Some(width), Some(height)) => ViewDimensions::new(Size::new(width, height)),
-            (Some(width), None) => ViewDimensions::new(Size::new(width, width / ratio)),
-            (None, Some(height)) => ViewDimensions::new(Size::new(height * ratio, height)),
-            (None, None) => {
-                if let Some((video_width, video_height)) = self.current_video_dimensions() {
-                    ViewDimensions::new(Size::new(
-                        u32_to_f32(video_width, "video width"),
-                        u32_to_f32(video_height, "video height"),
-                    ))
-                } else {
-                    ViewDimensions::new(Size::zero())
-                }
-            }
-        }
+        fill_proposal(proposal)
     }
 
     /// Snapshot of the shader-side warp state: the live spherical camera, or
@@ -5729,6 +5774,10 @@ fn fill_crop(
 
 /// [`GpuContent`] for the spherical and aspect-fill presentations.
 impl GpuContent for VideoWarpContent {
+    fn measure(&self, proposal: ProposalSize) -> ViewDimensions {
+        fill_proposal(proposal)
+    }
+
     fn setup(&mut self, gpu: &GpuContentContext<'_>) {
         self.converter = Some(LinearRgbaConverter::new(gpu.device));
         self.bind_group_layout = Some(create_warp_bind_group_layout(gpu.device));
