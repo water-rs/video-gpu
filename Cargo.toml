@@ -80,7 +80,7 @@ ignored = ["shaderloom"]
 # Third-party forks the framework itself patches; a registry dependency does
 # not carry its own patch table, so they are repeated here so this graph
 # resolves the same sources as water-rs/waterui `dev`
-# (59874864a13f28509bb09c8db3b162649322de94), which carries the shaderloom
+# (60aecf05480597399952a42146b8ecdfc2ec87a2), which carries the shaderloom
 # 0.2.1 move — waterui-graphics asks for `runtime`, a feature no shaderloom
 # 0.1 registry release has. Every `waterui-*` crate this crate reaches,
 # directly or transitively, is the same monorepo commit, and the Cherenkov
