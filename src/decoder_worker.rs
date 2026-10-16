@@ -2347,8 +2347,8 @@ impl AndroidPowerDecoders {
                         audio_track,
                     )?);
                 }
-                PlaybackPowerPolicy::PlatformManaged => unreachable!(
-                    "platform-managed playback returns before required power-path creation"
+                _ => unreachable!(
+                    "only a required power policy reaches required power-path creation"
                 ),
             }
         }
@@ -2374,9 +2374,7 @@ impl AndroidPowerDecoders {
                     PlaybackPowerPolicy::RequireAudioVideoTunneling => {
                         PlaybackOutputPath::AudioVideoTunneling
                     }
-                    PlaybackPowerPolicy::PlatformManaged => unreachable!(
-                        "platform-managed playback cannot publish a required power controller"
-                    ),
+                    _ => unreachable!("only a required power policy publishes a power controller"),
                 },
             },
         );
