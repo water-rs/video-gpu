@@ -41,10 +41,10 @@ waterui-controls = { version = "0.5.1" }
 waterui-graphics = { version = "0.5.1", features = ["gpu"] }
 shaderloom = { version = "0.2.1", default-features = false, features = ["runtime"] }
 waterui-text = { version = "0.5.1" }
-waterkit-video = { version = "0.1.4", features = ["streaming"] }
-waterkit-codec = { version = "0.1.4", default-features = false, features = ["gpu", "software-decode"] }
-waterkit-audio = { version = "0.1.4", features = ["streaming"] }
-waterkit-fs = { version = "0.1.4" }
+waterkit-video = { version = "0.2", features = ["streaming"] }
+waterkit-codec = { version = "0.2", default-features = false, features = ["gpu", "software-decode"] }
+waterkit-audio = { version = "0.2", features = ["streaming"] }
+waterkit-fs = { version = "0.2" }
 futures = "0.3"
 executor-core = "0.7.1"
 nami = "0.13"
@@ -59,10 +59,10 @@ shaderloom = { version = "0.2.1", default-features = false, features = ["build"]
 jni = "0.22.4"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-waterkit-core = { version = "0.1.4" }
+waterkit-core = { version = "0.2" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-waterkit-audio = { version = "0.1.4", features = ["he-aac"] }
+waterkit-audio = { version = "0.2", features = ["he-aac"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1.26.0", features = ["js"] }
@@ -79,8 +79,7 @@ ignored = ["shaderloom"]
 
 # Third-party forks the framework itself patches; a registry dependency does
 # not carry its own patch table, so they are repeated here so this graph
-# resolves the same sources as water-rs/waterui on `feat/2633-nami-0.13`,
-# which moves the framework to nami 0.13 / nami-core 0.5; `Cargo.lock`
+# resolves the same sources as water-rs/waterui's `dev`; `Cargo.lock`
 # records the exact commit. Every `waterui-*` crate this crate reaches,
 # directly or transitively, is the same monorepo commit, and the Cherenkov
 # engine family, the filtrate crates and hydrolysis live in that repository —
@@ -177,9 +176,9 @@ waterkit-video-core = { git = "https://github.com/water-rs/waterkit", branch = "
 waterkit-video-player = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
 waterkit-video-streaming = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
 
-# Split components at the revisions the framework's own patch table pins —
+# Split components on the sources the framework's own patch table names —
 # each records through `waterui_graphics::draw` against this contract.
-waterui-image = { git = "https://github.com/water-rs/image", rev = "a36e16c555bd78ade9e28fad947af66a52f8f071" }
+waterui-image = { git = "https://github.com/water-rs/image", branch = "dev" }
 waterui-svg = { git = "https://github.com/water-rs/svg", rev = "16f99e021f735d0b1b31c95552b074e953d56418" }
 
 # `hydrolysis` lives in the monorepo at `backends/hydrolysis`; `hydrolysis-m3`
