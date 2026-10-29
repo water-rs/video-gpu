@@ -312,14 +312,14 @@ const fn should_wait_for_vod_buffering(
     first_frame_presented: bool,
     buffered_ahead_ms: u32,
 ) -> bool {
-    if policy.realtime || !source_downloading || !has_download_total {
+    if policy.realtime() || !source_downloading || !has_download_total {
         return false;
     }
 
     let threshold_ms = if first_frame_presented {
-        policy.vod_resume_buffer_ms
+        policy.vod_resume_buffer_ms()
     } else {
-        policy.vod_start_buffer_ms
+        policy.vod_start_buffer_ms()
     };
     buffered_ahead_ms < threshold_ms
 }
@@ -331,11 +331,11 @@ const fn should_enter_vod_stall_buffering(
     first_frame_presented: bool,
     buffered_ahead_ms: u32,
 ) -> bool {
-    if policy.realtime || !source_downloading || !has_download_total || !first_frame_presented {
+    if policy.realtime() || !source_downloading || !has_download_total || !first_frame_presented {
         return false;
     }
 
-    buffered_ahead_ms <= policy.vod_stall_buffer_ms
+    buffered_ahead_ms <= policy.vod_stall_buffer_ms()
 }
 
 #[derive(Clone)]
@@ -1019,12 +1019,11 @@ fn video_player_chrome(
 
 fn subtitle_track_label(track: &SubtitleTrack, index: usize) -> String {
     track
-        .label
-        .as_deref()
+        .get_label()
         .filter(|label| !label.trim().is_empty())
         .map(ToOwned::to_owned)
         .or_else(|| {
-            track.language.as_deref().and_then(|language| {
+            track.get_language().and_then(|language| {
                 let trimmed = language.trim();
                 (!trimmed.is_empty()).then_some(trimmed.to_owned())
             })
@@ -1086,13 +1085,13 @@ fn runtime_subtitle_track_info(tracks: &[RuntimeSubtitleTrack]) -> Vec<SubtitleT
         .map(|track| match &track.source {
             RuntimeSubtitleSource::Sidecar(sidecar) => SubtitleTrackInfo::new(
                 track.label.clone(),
-                sidecar.language.clone(),
+                sidecar.get_language().map(ToOwned::to_owned),
                 sidecar
-                    .forced
+                    .get_forced()
                     .then(|| String::from("forced-subtitle"))
                     .into_iter()
                     .collect(),
-                sidecar.forced,
+                sidecar.get_forced(),
                 SubtitleTrackOrigin::Sidecar,
             ),
             RuntimeSubtitleSource::Embedded(embedded) => {
@@ -1166,24 +1165,27 @@ fn subtitle_track_info_labels(tracks: &[SubtitleTrackInfo]) -> Vec<String> {
         .collect()
 }
 
-fn runtime_media_item(item: MediaItem) -> RuntimeMediaItem {
+fn runtime_media_item(item: &MediaItem) -> RuntimeMediaItem {
     RuntimeMediaItem {
-        source: item.source,
-        delivery: item.delivery,
-        subtitle_tracks: runtime_sidecar_subtitle_tracks(&item.subtitle_tracks),
-        drm: item.drm,
+        source: item.source().clone(),
+        delivery: item.get_delivery(),
+        subtitle_tracks: runtime_sidecar_subtitle_tracks(item.subtitle_tracks()),
+        drm: item.get_drm().cloned(),
     }
 }
 
 fn runtime_media_item_signal(source: &Computed<MediaItem>) -> Computed<RuntimeMediaItem> {
-    source.map(runtime_media_item).distinct().computed()
+    source
+        .map(|item| runtime_media_item(&item))
+        .distinct()
+        .computed()
 }
 
 fn select_default_subtitle_track_index(tracks: &[RuntimeSubtitleTrack]) -> Option<usize> {
     tracks
         .iter()
         .position(
-            |track| matches!(&track.source, RuntimeSubtitleSource::Sidecar(sidecar) if sidecar.forced),
+            |track| matches!(&track.source, RuntimeSubtitleSource::Sidecar(sidecar) if sidecar.get_forced()),
         )
         .or_else(|| {
             tracks
@@ -1908,17 +1910,17 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
         view,
         GestureObserver::new(gesture, move |env: Environment| {
             if let Some(event) = env.get::<DragEvent>() {
-                match event.phase {
+                match event.phase() {
                     GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
                     GesturePhase::Updated => {
                         let start = anchor.snapshot();
                         viewport.set_orientation(
                             event
-                                .translation
+                                .translation()
                                 .x
                                 .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.yaw),
                             event
-                                .translation
+                                .translation()
                                 .y
                                 .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.pitch)
                                 .clamp(-90.0, 90.0),
@@ -1928,12 +1930,12 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
                 }
             }
             if let Some(event) = env.get::<MagnificationEvent>() {
-                match event.phase {
+                match event.phase() {
                     GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
                     GesturePhase::Updated => {
                         let start = anchor.snapshot();
                         viewport.set_vertical_field_of_view_degrees(
-                            (start.vertical_field_of_view / event.scale).clamp(30.0, 120.0),
+                            (start.vertical_field_of_view / event.scale()).clamp(30.0, 120.0),
                         );
                     }
                     GesturePhase::Ended | GesturePhase::Cancelled => {}
@@ -2743,7 +2745,7 @@ impl VideoRenderer {
             pending_protected_frame: None,
             video_dimensions: None,
             presented_frame_history: PresentedFrameHistory::new(
-                playback_policy.network.maximum_prefetch_buffer(),
+                playback_policy.network().maximum_prefetch_buffer(),
             ),
             pending_frame_step: None,
             pending_forward_steps: 0,
@@ -2791,7 +2793,7 @@ impl VideoRenderer {
             download_total_bytes: None,
             last_reported_buffer_level_ms: None,
             observability: PlaybackObservability::new(
-                playback_policy.network.initial_bandwidth(),
+                playback_policy.network().initial_bandwidth(),
                 Instant::now(),
             ),
         }
@@ -3037,7 +3039,7 @@ impl VideoRenderer {
         self.download_total_bytes = None;
         self.last_reported_buffer_level_ms = None;
         self.observability.reset(
-            self.playback_policy.network.initial_bandwidth(),
+            self.playback_policy.network().initial_bandwidth(),
             Instant::now(),
         );
         self.playback_flags = PlaybackFlags::default();
@@ -3177,7 +3179,7 @@ impl VideoRenderer {
         }
         let now = Instant::now();
         if !self.is_realtime_policy()
-            && self.estimated_buffered_ahead_ms(now) < self.playback_policy.vod_resume_buffer_ms
+            && self.estimated_buffered_ahead_ms(now) < self.playback_policy.vod_resume_buffer_ms()
         {
             return;
         }
@@ -3447,7 +3449,7 @@ impl VideoRenderer {
 
         match track.source {
             RuntimeSubtitleSource::Embedded(track) => self.load_embedded_subtitle_cues(&track),
-            RuntimeSubtitleSource::Sidecar(track) => self.load_sidecar_subtitle_cues(track),
+            RuntimeSubtitleSource::Sidecar(track) => self.load_sidecar_subtitle_cues(&track),
             RuntimeSubtitleSource::Manifest(_) => Ok(()),
         }
     }
@@ -3476,8 +3478,8 @@ impl VideoRenderer {
         Ok(())
     }
 
-    fn load_sidecar_subtitle_cues(&mut self, track: SubtitleTrack) -> Result<(), String> {
-        let subtitle_source = track.source;
+    fn load_sidecar_subtitle_cues(&mut self, track: &SubtitleTrack) -> Result<(), String> {
+        let subtitle_source = track.source();
         let Some(asset) = self.subtitle_asset.as_mut() else {
             return Ok(());
         };
@@ -3485,8 +3487,8 @@ impl VideoRenderer {
         loop {
             match asset {
                 FileAssetState::Unresolved => {
-                    if is_remote_url(&subtitle_source) {
-                        let cache_path = cached_subtitle_path(&subtitle_source);
+                    if is_remote_url(subtitle_source) {
+                        let cache_path = cached_subtitle_path(subtitle_source);
                         if cache_path.exists() {
                             self.subtitle_cues = parse_subtitles_from_path(&cache_path)
                                 .map_err(|error| error.to_string())?;
@@ -3504,7 +3506,7 @@ impl VideoRenderer {
                         return Ok(());
                     }
 
-                    let local_path = local_source_path(&subtitle_source);
+                    let local_path = local_source_path(subtitle_source);
                     self.subtitle_cues = parse_subtitles_from_path(&local_path)
                         .map_err(|error| error.to_string())?;
                     *asset = FileAssetState::Ready(local_path);
@@ -3595,7 +3597,7 @@ impl VideoRenderer {
         let config = ProgressiveDecoderConfig::new(
             self.audio_output.clone(),
             self.audio_track_selection.snapshot(),
-            self.playback_policy.network.maximum_prefetch_buffer(),
+            self.playback_policy.network().maximum_prefetch_buffer(),
         );
         #[cfg(target_os = "android")]
         let config = config.android_playback(self.android_playback_config());
@@ -3631,7 +3633,7 @@ impl VideoRenderer {
             self.set_subtitle_text(None);
         }
         let config = SegmentedDecoderConfig::new(
-            self.playback_policy.network,
+            self.playback_policy.network(),
             viewport,
             self.audio_output.clone(),
             self.last_audio_track_selection,
@@ -3655,13 +3657,13 @@ impl VideoRenderer {
 
     fn validate_self_drawn_power_policy(&self) -> Result<(), String> {
         if cfg!(target_os = "android")
-            || self.playback_policy.power == PlaybackPowerPolicy::PlatformManaged
+            || self.playback_policy.get_power() == PlaybackPowerPolicy::PlatformManaged
         {
             return Ok(());
         }
         Err(format!(
             "required {:?} playback is unavailable on the self-drawn {} backend",
-            self.playback_policy.power,
+            self.playback_policy.get_power(),
             std::env::consts::OS
         ))
     }
@@ -4035,7 +4037,7 @@ impl VideoRenderer {
     fn sync_live_catch_up_rate(&mut self, should_play: bool, now: Instant) {
         let user_rate = clamp_playback_rate(self.playback_rate.snapshot());
         if !should_play
-            || !self.playback_policy.realtime
+            || !self.playback_policy.realtime()
             || (user_rate - NORMAL_PLAYBACK_RATE).abs() > 0.001
         {
             self.live_catch_up_rate = NORMAL_PLAYBACK_RATE;
@@ -4045,7 +4047,7 @@ impl VideoRenderer {
             self.live_catch_up_rate = NORMAL_PLAYBACK_RATE;
             return;
         };
-        let network = self.playback_policy.network;
+        let network = self.playback_policy.network();
         let mut minimum = network.live_minimum_playback_rate();
         let mut maximum = network.live_maximum_playback_rate();
         if let Some(manifest) = self.live_playback_rate_range {
@@ -4067,12 +4069,12 @@ impl VideoRenderer {
     }
 
     const fn is_realtime_policy(&self) -> bool {
-        self.playback_policy.realtime
+        self.playback_policy.realtime()
     }
 
     fn live_drop_threshold(&self) -> Duration {
         Duration::from_millis(u64::from(
-            self.playback_policy.live_max_video_late_ms.max(1),
+            self.playback_policy.live_max_video_late_ms().max(1),
         ))
     }
 
@@ -4761,7 +4763,7 @@ impl VideoRenderer {
         } else {
             self.set_buffering(true);
             self.maybe_emit_buffer_level(now);
-            if self.estimated_buffered_ahead_ms(now) < self.playback_policy.vod_resume_buffer_ms {
+            if self.estimated_buffered_ahead_ms(now) < self.playback_policy.vod_resume_buffer_ms() {
                 return;
             }
         }
@@ -4870,7 +4872,7 @@ impl VideoRenderer {
         self.last_step_forward_generation = forward_generation;
         self.last_step_backward_generation = backward_generation;
 
-        if self.playback_policy.power != PlaybackPowerPolicy::PlatformManaged
+        if self.playback_policy.get_power() != PlaybackPowerPolicy::PlatformManaged
             && (self.pending_forward_steps > 0 || self.pending_backward_steps > 0)
         {
             self.pending_forward_steps = 0;
@@ -5779,23 +5781,23 @@ impl GpuContent for VideoWarpContent {
     }
 
     fn setup(&mut self, gpu: &GpuContentContext<'_>) {
-        self.converter = Some(LinearRgbaConverter::new(gpu.device));
-        self.bind_group_layout = Some(create_warp_bind_group_layout(gpu.device));
-        self.sampler = Some(create_warp_sampler(gpu.device));
-        self.params = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        self.converter = Some(LinearRgbaConverter::new(gpu.device()));
+        self.bind_group_layout = Some(create_warp_bind_group_layout(gpu.device()));
+        self.sampler = Some(create_warp_sampler(gpu.device()));
+        self.params = Some(gpu.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Video warp params"),
             size: 48,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         }));
         self.pipeline = Some(create_warp_pipeline(
-            gpu.device,
+            gpu.device(),
             self.bind_group_layout
                 .as_ref()
                 .expect("warp layout is installed"),
-            gpu.format,
+            gpu.format(),
         ));
-        lock_warp_inbox(&self.inbox).redraw = Some(gpu.redraw.clone());
+        lock_warp_inbox(&self.inbox).redraw = Some(gpu.redraw().clone());
     }
 
     fn render(&mut self, frame: &mut GpuContentFrame<'_>) {

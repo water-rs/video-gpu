@@ -217,7 +217,7 @@ fn self_drawn_player_controls_render_without_retrying_a_failed_source(
 
     let captured = app.capture_snapshot("video", "video-player-controls", "after-interactions");
     assert_eq!(
-        (captured.snapshot().width, captured.snapshot().height),
+        (captured.snapshot().width(), captured.snapshot().height()),
         (480, 320),
         "self-drawn player snapshot must preserve the configured viewport",
     );
