@@ -109,22 +109,32 @@ filtrate-derive = { git = "https://github.com/water-rs/waterui", branch = "dev" 
 # instead of their value and crashes in CGColorSpaceCreateWithName whenever a
 # surface negotiates Extended Display P3 or BT.2100 (gfx-rs/wgpu#10175, fixed on
 # trunk, not yet released for v30). Mirrored from water-rs/waterui's own
-# `[patch.crates-io]` on the branch named above: `[patch]` in a
+# `[patch.crates-io]` on `dev`: `[patch]` in a
 # dependency's manifest does not apply downstream, so without these entries
 # this graph resolves the crashing crates.io build while cherenkov resolves
-# the fork. Drop them once wgpu-hal 30.0.2 ships the backport.
-naga = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-naga-types = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-core = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-core-deps-apple = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-core-deps-emscripten = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-core-deps-windows-linux-android = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-hal = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-naga-bridge = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
-wgpu-types = { git = "https://github.com/water-rs/wgpu", rev = "11e85956a78886d1a96d586f255ea9b0661da2cd" }
+# the fork. The branch also carries the passthrough threadgroup-memory
+# metadata and moves wgpu-hal to glow 0.18, as the framework's own patch table
+# does; drop them once a wgpu-hal release ships them.
+# `shaderloom` follows its `dev`: the published release lacks
+# `workgroup_memory_sizes` on `PassthroughShaderEntryPoint`, which the wgpu
+# branch requires.
+shaderloom = { git = "https://github.com/water-rs/shaderloom", branch = "dev" }
+naga = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+naga-types = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-core = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-core-deps-apple = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-core-deps-emscripten = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-hal = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-naga-bridge = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+wgpu-types = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
+# wgpu-external-frame hands wgpu-hal's GLES textures to its own glow context, so
+# it must link the glow 0.18 the branch above carries; its crates.io 0.4.0 links
+# 0.17 (water-rs/wgpu-external-frame#43). Drop it with the wgpu entries.
+wgpu-external-frame = { git = "https://github.com/water-rs/wgpu-external-frame", branch = "dev" }
 
-# Migrated framework crates on the waterui branch named above; one source
+# Migrated framework crates on water-rs/waterui's `dev`; one source
 # serves every monorepo crate so the graph holds one copy of each.
 waterui = { git = "https://github.com/water-rs/waterui", branch = "dev" }
 waterui-assets = { git = "https://github.com/water-rs/waterui", branch = "dev" }
