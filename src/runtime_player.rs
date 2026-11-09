@@ -6568,7 +6568,7 @@ mod tests {
             .expect("the output is live");
         let target = host_target(device);
         renderer
-            .present(&target, DISPLAY, FrameTime(std::time::Instant::now()))
+            .present(&target, DISPLAY, FrameTime::now())
             .expect("the frame presents");
         read_target(device, queue, &target)
             .save_png(output_dir.join(file_name))
@@ -6623,7 +6623,7 @@ mod tests {
 
         let target = host_target(device);
         renderer
-            .present(&target, DISPLAY, FrameTime(std::time::Instant::now()))
+            .present(&target, DISPLAY, FrameTime::now())
             .expect("the frame presents");
         let readback = read_target(device, queue, &target);
         readback
@@ -6674,7 +6674,7 @@ mod tests {
         .expect("the GPU content renderer settles");
         let target = host_target(device);
         renderer
-            .present(&target, DISPLAY, FrameTime(std::time::Instant::now()))
+            .present(&target, DISPLAY, FrameTime::now())
             .expect("the frame presents");
         read_target(device, queue, &target)
             .save_png(output_dir.join(file_name))
