@@ -3078,8 +3078,7 @@ impl VideoRenderer {
 
         let position = self.playback_position(Instant::now());
         if let Err(message) = self.restart_decoder_from_position(position) {
-            self.emit_event(Event::Error { message });
-            self.set_buffering(false);
+            self.fail_playback(message);
         }
     }
 
@@ -3105,8 +3104,7 @@ impl VideoRenderer {
 
         let position = self.playback_position(Instant::now());
         if let Err(message) = self.restart_decoder_from_position(position) {
-            self.emit_event(Event::Error { message });
-            self.set_buffering(false);
+            self.fail_playback(message);
         }
     }
 
@@ -3136,8 +3134,7 @@ impl VideoRenderer {
 
         let position = self.playback_position(Instant::now());
         if let Err(message) = self.restart_decoder_from_position(position) {
-            self.emit_event(Event::Error { message });
-            self.set_buffering(false);
+            self.fail_playback(message);
         }
     }
 
@@ -3160,11 +3157,7 @@ impl VideoRenderer {
         }
 
         if let Err(message) = self.resolve_source_path() {
-            if self.source_flags.source_error == ErrorReportState::Clear {
-                self.emit_event(Event::Error { message });
-                self.source_flags.source_error = ErrorReportState::Reported;
-            }
-            self.set_buffering(false);
+            self.fail_source(message);
             return;
         }
         self.resume_decoder_after_download_progress();
@@ -3188,9 +3181,8 @@ impl VideoRenderer {
         self.stop_decode_worker();
         let position = self.duration.mul_f64(self.last_reported_progress);
         if let Err(message) = self.restart_decoder_from_position(position) {
-            self.emit_event(Event::Error { message });
             self.stop_decode_worker();
-            self.set_buffering(false);
+            self.fail_playback(message);
         }
     }
 
@@ -3806,11 +3798,7 @@ impl VideoRenderer {
                 return;
             }
             Err(message) => {
-                if self.source_flags.source_error == ErrorReportState::Clear {
-                    self.emit_event(Event::Error { message });
-                    self.source_flags.source_error = ErrorReportState::Reported;
-                }
-                self.set_buffering(false);
+                self.fail_source(message);
                 return;
             }
         };
@@ -4272,8 +4260,40 @@ impl VideoRenderer {
     }
 
     fn set_buffering(&mut self, buffering: bool) {
+        if self.apply_buffering(buffering) {
+            self.emit_event(if buffering {
+                Event::Buffering
+            } else {
+                Event::BufferingEnded
+            });
+            self.maybe_emit_buffer_level(Instant::now());
+        }
+    }
+
+    /// The single exit for every unrecoverable playback failure: reports the
+    /// error and clears the buffering state without announcing
+    /// `BufferingEnded`, which would tell observers playback can continue.
+    /// `Event::Error` stays the last event so the phase remains `Failed`.
+    fn fail_playback(&mut self, message: String) {
+        self.apply_buffering(false);
+        self.emit_event(Event::Error { message });
+    }
+
+    /// Reports a source failure once per source; the buffering state clears on
+    /// every report.
+    fn fail_source(&mut self, message: String) {
+        if self.source_flags.source_error == ErrorReportState::Clear {
+            self.source_flags.source_error = ErrorReportState::Reported;
+            self.fail_playback(message);
+        } else {
+            self.apply_buffering(false);
+        }
+    }
+
+    /// Updates the buffering state and its observers; returns whether it changed.
+    fn apply_buffering(&mut self, buffering: bool) -> bool {
         if self.control_flags.is_buffering == buffering {
-            return;
+            return false;
         }
 
         let now = Instant::now();
@@ -4286,13 +4306,7 @@ impl VideoRenderer {
         if self.player.is_some() {
             self.push_ui_update(UiUpdate::Buffering(buffering));
         }
-
-        self.emit_event(if buffering {
-            Event::Buffering
-        } else {
-            Event::BufferingEnded
-        });
-        self.maybe_emit_buffer_level(now);
+        true
     }
 
     fn sync_audio_volume(&mut self) {
@@ -4773,9 +4787,8 @@ impl VideoRenderer {
 
     fn loop_decoder_from_start(&mut self, should_play: bool) {
         if let Err(message) = self.restart_decoder_from_position(Duration::ZERO) {
-            self.emit_event(Event::Error { message });
             self.stop_decode_worker();
-            self.set_buffering(false);
+            self.fail_playback(message);
             return;
         }
         self.last_reported_progress = 0.0;
@@ -4839,8 +4852,7 @@ impl VideoRenderer {
         self.pending_frame = None;
         self.set_play_requested(false);
         self.playback_flags.decoder_lifecycle = DecoderLifecycle::Failed;
-        self.emit_event(Event::Error { message });
-        self.set_buffering(false);
+        self.fail_playback(message);
     }
 
     fn maybe_seek_from_ui(&mut self) {
@@ -5094,8 +5106,7 @@ impl VideoRenderer {
             worker.request_seek(requested);
         } else if let Err(message) = self.restart_decoder_from_position(requested) {
             self.control_flags.seek_inflight = false;
-            self.emit_event(Event::Error { message });
-            self.set_buffering(false);
+            self.fail_playback(message);
             return;
         }
 
