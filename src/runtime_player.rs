@@ -57,11 +57,11 @@ use waterui_core::{
     id::SelfId,
     layout::{ProposalSize, Size, ViewDimensions},
 };
-use waterui_graphics::cherenkov_gpu::interop::{
+use waterui_graphics::gpu::RetiredOutput;
+use waterui_graphics::gpu::interop::{
     ChromaSiting, ExternalFrame, FrameColor, Primaries, RgbAlpha, Transfer, YuvMatrix, YuvRange,
 };
-use waterui_graphics::gpu::RetiredOutput;
-use waterui_graphics::wgpu;
+use waterui_graphics::gpu::wgpu;
 use waterui_graphics::{
     Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
     Frame as GpuContentFrame, FrameOutput, GpuContent, GpuContentView, RedrawHandle,
@@ -6205,11 +6205,12 @@ mod tests {
     };
     use waterui_graphics::{
         ExternalFrameSource, ExternalFrameView, FrameOutput, RedrawHandle,
-        cherenkov::{Display, FrameTime, Readback},
-        cherenkov_gpu::interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
-        gpu::{ExternalFrameRenderer, GpuContentRenderer, GpuRuntime},
+        gpu::{
+            Display, ExternalFrameRenderer, FrameTime, GpuContentRenderer, GpuRuntime, Readback,
+            interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
+            wgpu,
+        },
         offscreen::{OffscreenImage, OffscreenSize},
-        wgpu,
     };
     use waterui_video::{
         AudioTrackSelection, EquirectangularProjection, SphericalStereoLayout, SphericalViewport,
