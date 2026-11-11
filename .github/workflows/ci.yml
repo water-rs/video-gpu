@@ -89,10 +89,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-ndk
-      # The runner image ships the NDK under ANDROID_NDK_LATEST_HOME.
+      # The runner image ships the NDK and exports its location
+      # (ANDROID_NDK_ROOT, ANDROID_NDK_HOME), which cargo-ndk reads.
       - run: cargo ndk --target arm64-v8a clippy --workspace --all-features -- -D warnings
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
 
   msrv:
     name: MSRV
