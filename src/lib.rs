@@ -11,7 +11,7 @@ use shaderloom::CompiledShader;
 // non-wasm targets; the re-export keeps it resolving without a direct `wgpu`
 // dependency.
 #[cfg(all(not(target_vendor = "apple"), not(target_arch = "wasm32")))]
-use waterui_graphics::wgpu;
+use waterui_graphics::gpu::wgpu;
 
 const SPHERICAL_VIDEO_SHADER: CompiledShader =
     include!(concat!(env!("OUT_DIR"), "/spherical_video.rs"));
