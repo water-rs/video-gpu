@@ -3662,7 +3662,7 @@ impl VideoRenderer {
 
     #[cfg(target_os = "android")]
     fn android_playback_config(&self) -> AndroidPlaybackConfig {
-        let clock = if self.playback_policy.realtime {
+        let clock = if self.playback_policy.realtime() {
             AndroidPlaybackClock::Realtime
         } else {
             AndroidPlaybackClock::Fixed(self.playback_rate.snapshot())
@@ -3686,7 +3686,7 @@ impl VideoRenderer {
             self.drm.clone(),
             self.license_server.clone(),
             self.video_surface_receiver.clone(),
-            self.playback_policy.power,
+            self.playback_policy.get_power(),
             AndroidPowerCompatibility::new(clock, video_access, audio_processing, audio_route),
         )
     }
