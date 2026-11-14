@@ -6561,13 +6561,13 @@ mod tests {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
         let (view, outputs) = output_probe();
-        let mut renderer = ExternalFrameRenderer::new(
+        let mut renderer = pollster::block_on(ExternalFrameRenderer::new(
             runtime,
             context.clone(),
             &view.stream(),
             visual_size(),
             RedrawHandle::new(|| {}),
-        )
+        ))
         .expect("the external frame renderer settles");
         let (y_texture, uv_texture) = create_visual_yuv_textures(device, layout);
         write_visual_color_bars(queue, &y_texture, &uv_texture, layout);
@@ -6579,8 +6579,7 @@ mod tests {
             .present(frame)
             .expect("the output is live");
         let target = host_target(device);
-        renderer
-            .present(&target, DISPLAY, FrameTime::now())
+        pollster::block_on(renderer.present(&target, DISPLAY, FrameTime::now()))
             .expect("the frame presents");
         read_target(device, queue, &target)
             .save_png(output_dir.join(file_name))
@@ -6600,13 +6599,13 @@ mod tests {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
         let (view, outputs) = output_probe();
-        let mut renderer = ExternalFrameRenderer::new(
+        let mut renderer = pollster::block_on(ExternalFrameRenderer::new(
             runtime,
             context.clone(),
             &view.stream(),
             visual_size(),
             RedrawHandle::new(|| {}),
-        )
+        ))
         .expect("the external frame renderer settles");
         let mut presenter = ExternalFramePresenter::default();
         presenter.start(outputs.borrow()[0].clone());
@@ -6634,8 +6633,7 @@ mod tests {
         assert_eq!(uploaded, 0, "no software upload happened");
 
         let target = host_target(device);
-        renderer
-            .present(&target, DISPLAY, FrameTime::now())
+        pollster::block_on(renderer.present(&target, DISPLAY, FrameTime::now()))
             .expect("the frame presents");
         let readback = read_target(device, queue, &target);
         readback
@@ -6676,17 +6674,16 @@ mod tests {
         let (device, queue) = (context.device(), context.queue());
         let mut view = waterui_graphics::GpuContentView::new(warp_content);
         let boxed = view.take_engine_content();
-        let mut renderer = GpuContentRenderer::new(
+        let mut renderer = pollster::block_on(GpuContentRenderer::new(
             runtime,
             context.clone(),
             boxed,
             visual_size(),
             RedrawHandle::new(|| {}),
-        )
+        ))
         .expect("the GPU content renderer settles");
         let target = host_target(device);
-        renderer
-            .present(&target, DISPLAY, FrameTime::now())
+        pollster::block_on(renderer.present(&target, DISPLAY, FrameTime::now()))
             .expect("the frame presents");
         read_target(device, queue, &target)
             .save_png(output_dir.join(file_name))
