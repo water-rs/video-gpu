@@ -3,6 +3,7 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use hydrolysis_m3::Material3;
+use waterui::Signal as _;
 use waterui::View;
 use waterui::ViewExt as _;
 use waterui_testing::{
@@ -10,7 +11,8 @@ use waterui_testing::{
     WaitResult,
 };
 use waterui_video::{
-    Event, MediaItem, PlaybackSession, PlayerController, Playlist, Url, VideoPlayer, video,
+    Event, MediaItem, PlaybackPhase, PlaybackSession, PlayerController, Playlist, Url, VideoPlayer,
+    video,
 };
 
 fn missing_video_url() -> Url {
@@ -198,12 +200,19 @@ fn self_drawn_player_controls_render_without_retrying_a_failed_source(
 ) {
     let decoder_errors = Rc::new(RefCell::new(Vec::new()));
     let decoder_errors_for_view = Rc::clone(&decoder_errors);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let events_for_view = Rc::clone(&events);
+    let mounted_phase = Rc::new(RefCell::new(None));
+    let phase_for_view = Rc::clone(&mounted_phase);
     let mut app: OffscreenApp = ui.mount_offscreen(move || {
         let session = PlaybackSession::new(Playlist::single(missing_video_url()));
+        phase_for_view.replace(Some(session.controller().phase()));
         VideoPlayer::new(session)
             .on_event({
                 let decoder_errors = Rc::clone(&decoder_errors_for_view);
+                let events = Rc::clone(&events_for_view);
                 move |event: Event| {
+                    events.borrow_mut().push(format!("{event:?}"));
                     if let Event::Error { message } = event {
                         decoder_errors.borrow_mut().push(message);
                     }
@@ -217,7 +226,7 @@ fn self_drawn_player_controls_render_without_retrying_a_failed_source(
 
     let captured = app.capture_snapshot("video", "video-player-controls", "after-interactions");
     assert_eq!(
-        (captured.snapshot().width, captured.snapshot().height),
+        (captured.snapshot().width(), captured.snapshot().height()),
         (480, 320),
         "self-drawn player snapshot must preserve the configured viewport",
     );
@@ -226,5 +235,31 @@ fn self_drawn_player_controls_render_without_retrying_a_failed_source(
         1,
         "a failed source must emit once and remain failed across later render frames: {:?}",
         decoder_errors.borrow(),
+    );
+
+    let events = events.borrow();
+    assert!(
+        events
+            .last()
+            .is_some_and(|event| event.starts_with("Error")),
+        "a failed player's last event must be the error, not a buffering or ready signal: {events:?}",
+    );
+    assert!(
+        !events.iter().any(|event| event == "BufferingEnded"),
+        "a failure must clear buffering without announcing that playback can continue: {events:?}",
+    );
+    let phase = mounted_phase
+        .borrow()
+        .clone()
+        .expect("mounting the player must publish its phase to the test");
+    assert_eq!(
+        phase.snapshot(),
+        PlaybackPhase::Failed,
+        "a failed source must leave the phase failed"
+    );
+    assert!(
+        !tree_debug(&mut app).contains("(Buffering)"),
+        "a failed source must clear the buffering indicator: {}",
+        tree_debug(&mut app)
     );
 }

@@ -7,10 +7,14 @@ mod latest_channel;
 mod runtime_player;
 
 use shaderloom::CompiledShader;
+// `include_compiled_spirv!` names `wgpu` at the expansion site on non-Apple,
+// non-wasm targets; the re-export keeps it resolving without a direct `wgpu`
+// dependency.
+#[cfg(all(not(target_vendor = "apple"), not(target_arch = "wasm32")))]
+use waterui_graphics::gpu::wgpu;
 
-const VIDEO_YUV_SHADER: CompiledShader = include!(concat!(env!("OUT_DIR"), "/video_yuv.rs"));
-const VIDEO_YUV_SPHERICAL_SHADER: CompiledShader =
-    include!(concat!(env!("OUT_DIR"), "/video_yuv_spherical.rs"));
+const SPHERICAL_VIDEO_SHADER: CompiledShader =
+    include!(concat!(env!("OUT_DIR"), "/spherical_video.rs"));
 
 #[cfg(target_os = "android")]
 #[doc(hidden)]
@@ -18,7 +22,8 @@ pub use android_video_surface::{AndroidVideoSurfaceBridge, AndroidVideoSurfaceHo
 
 use waterkit_audio::{AudioDevice, AudioOutput, PlayerError};
 use waterkit_video::{AnyLicenseServer, LicenseServer, ZenwaveLicenseServer};
-use waterui_core::{Binding, Environment};
+use waterui_core::Binding;
+use waterui_core::Environment;
 
 /// Backend configuration for self-drawn video playback.
 #[derive(Debug, Clone)]

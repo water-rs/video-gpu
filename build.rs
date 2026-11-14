@@ -1,15 +1,9 @@
-//! Compiles the planar and spherical video GPU shaders for the selected target.
+//! Compiles the spherical video GPU shader for the selected target.
 
 use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    shaderloom::build::compile_wgsl_source(
-        "waterkit-codec/yuv_to_rgba.wgsl",
-        waterkit_codec::YUV_COLOR_SHADER_WGSL,
-        "video_yuv",
-    );
-
     let spherical_path =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"))
             .join("src/shaders/spherical_video_render.wgsl");
@@ -21,8 +15,8 @@ fn main() {
         )
     });
     shaderloom::build::compile_wgsl_source(
-        "waterkit-codec/yuv_to_rgba.wgsl+spherical_video_render.wgsl",
-        &format!("{}{spherical}", waterkit_codec::YUV_COLOR_SHADER_WGSL),
-        "video_yuv_spherical",
+        "spherical_video_render.wgsl",
+        &spherical,
+        "spherical_video",
     );
 }
