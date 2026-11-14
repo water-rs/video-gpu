@@ -91,7 +91,7 @@ waterui-video-gpu = { path = "." }
 # suiteki 0.1.1 on crates.io implements nami-core 0.3's `Signal`; suiteki's
 # `dev` implements 0.5's (water-rs/suiteki#29), the source the framework's own
 # patch table names. Drop once a release carries it.
-suiteki = { git = "https://github.com/water-rs/suiteki", branch = "dev" }
+suiteki = { git = "https://github.com/water-rs/suiteki", branch = "main" }
 
 # The Cherenkov engine family lives in water-rs/waterui under `graphics/`:
 # the engine and its GPU backend, the `cherenkov-record` vocabulary
@@ -118,7 +118,7 @@ filtrate-derive = { git = "https://github.com/water-rs/waterui", branch = "dev" 
 # `shaderloom` follows its `dev`: the published release lacks
 # `workgroup_memory_sizes` on `PassthroughShaderEntryPoint`, which the wgpu
 # branch requires.
-shaderloom = { git = "https://github.com/water-rs/shaderloom", branch = "dev" }
+shaderloom = { git = "https://github.com/water-rs/shaderloom", branch = "main" }
 naga = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
 naga-types = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
 wgpu = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-shared-memory-v30" }
@@ -132,7 +132,7 @@ wgpu-types = { git = "https://github.com/water-rs/wgpu", branch = "fix/metal-sha
 # wgpu-external-frame hands wgpu-hal's GLES textures to its own glow context, so
 # it must link the glow 0.18 the branch above carries; its crates.io 0.4.0 links
 # 0.17 (water-rs/wgpu-external-frame#43). Drop it with the wgpu entries.
-wgpu-external-frame = { git = "https://github.com/water-rs/wgpu-external-frame", branch = "dev" }
+wgpu-external-frame = { git = "https://github.com/water-rs/wgpu-external-frame", branch = "main" }
 
 # Migrated framework crates on water-rs/waterui's `dev`; one source
 # serves every monorepo crate so the graph holds one copy of each.
@@ -171,20 +171,20 @@ waterui-webview = { git = "https://github.com/water-rs/waterui", branch = "dev" 
 # its `DecodedFrameUploader` produces the integer NV12/P010 planes
 # `ExternalFrame::yuv` imports and imports CVPixelBuffers through Metal on
 # Apple, in place.
-waterkit-audio = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-build = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-clipboard = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-codec = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-core = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-dialog = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-fs = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-location = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-permission = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-video = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-video-container = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-video-core = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-video-player = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
-waterkit-video-streaming = { git = "https://github.com/water-rs/waterkit", branch = "dev" }
+waterkit-audio = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-build = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-clipboard = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-codec = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-core = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-dialog = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-fs = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-location = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-permission = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-video = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-video-container = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-video-core = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-video-player = { git = "https://github.com/water-rs/waterkit", branch = "main" }
+waterkit-video-streaming = { git = "https://github.com/water-rs/waterkit", branch = "main" }
 
 # Split components on the sources the framework's own patch table names —
 # each records through `waterui_graphics::draw` against this contract.
