@@ -64,7 +64,7 @@ use waterui_graphics::gpu::interop::{
 use waterui_graphics::gpu::wgpu;
 use waterui_graphics::{
     Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
-    Frame as GpuContentFrame, FrameOutput, GpuContent, GpuContentView, RedrawHandle,
+    Frame as GpuContentFrame, FrameOutput, GpuContent, GpuView, RedrawHandle,
 };
 use waterui_layout::{
     frame::Frame,
@@ -2024,7 +2024,7 @@ impl View for VideoSurface {
         let surface = if spherical || fill {
             let inbox = Arc::new(Mutex::new(WarpInbox::default()));
             self.renderer.borrow_mut().warp_inbox = Some(inbox.clone());
-            AnyView::new(GpuContentView::new(VideoWarpContent {
+            AnyView::new(GpuView::new(VideoWarpContent {
                 inbox,
                 pipeline: None,
                 sampler: None,
@@ -6672,7 +6672,7 @@ mod tests {
     ) {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
-        let mut view = waterui_graphics::GpuContentView::new(warp_content);
+        let mut view = waterui_graphics::GpuView::new(warp_content);
         let boxed = view.take_engine_content();
         let mut renderer = pollster::block_on(GpuContentRenderer::new(
             runtime,
