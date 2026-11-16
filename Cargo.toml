@@ -41,10 +41,10 @@ waterui-controls = { version = "0.5.1" }
 waterui-graphics = { version = "0.5.1", features = ["gpu"] }
 shaderloom = { version = "0.2.1", default-features = false, features = ["runtime"] }
 waterui-text = { version = "0.5.1" }
-waterkit-video = { version = "0.2", features = ["streaming"] }
-waterkit-codec = { version = "0.2", default-features = false, features = ["gpu", "software-decode"] }
-waterkit-audio = { version = "0.2", features = ["streaming"] }
-waterkit-fs = { version = "0.2" }
+waterkit-video = { version = "0.3", features = ["streaming"] }
+waterkit-codec = { version = "0.3", default-features = false, features = ["gpu", "software-decode"] }
+waterkit-audio = { version = "0.3", features = ["streaming"] }
+waterkit-fs = { version = "0.3" }
 futures = "0.3"
 executor-core = "0.7.1"
 nami = "0.13"
@@ -59,10 +59,10 @@ shaderloom = { version = "0.2.1", default-features = false, features = ["build"]
 jni = "0.22.4"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-waterkit-core = { version = "0.2" }
+waterkit-core = { version = "0.3" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-waterkit-audio = { version = "0.2", features = ["he-aac"] }
+waterkit-audio = { version = "0.3", features = ["he-aac"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1.26.0", features = ["js"] }
