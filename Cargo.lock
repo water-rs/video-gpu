@@ -838,7 +838,7 @@ dependencies = [
 [[package]]
 name = "cherenkov"
 version = "0.0.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "arc-swap",
  "async-channel",
@@ -862,7 +862,7 @@ dependencies = [
 [[package]]
 name = "cherenkov-gpu"
 version = "0.0.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "ash",
  "block2",
@@ -914,7 +914,7 @@ dependencies = [
 [[package]]
 name = "cherenkov-record"
 version = "0.0.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "color",
  "filtrate-core",
@@ -931,7 +931,7 @@ dependencies = [
 [[package]]
 name = "cherenkov-shader"
 version = "0.0.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "naga",
  "thiserror 2.0.21",
@@ -940,7 +940,7 @@ dependencies = [
 [[package]]
 name = "cherenkov-simd"
 version = "0.0.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "fearless_simd",
 ]
@@ -948,7 +948,7 @@ dependencies = [
 [[package]]
 name = "cherenkov-stroke"
 version = "0.0.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "kurbo",
  "num-bigint",
@@ -1807,7 +1807,7 @@ dependencies = [
 [[package]]
 name = "filtrate"
 version = "0.2.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "blocking",
  "bytemuck",
@@ -1830,7 +1830,7 @@ dependencies = [
 [[package]]
 name = "filtrate-core"
 version = "0.2.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "askama",
 ]
@@ -1838,7 +1838,7 @@ dependencies = [
 [[package]]
 name = "filtrate-derive"
 version = "0.1.0"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2433,7 +2433,7 @@ dependencies = [
 [[package]]
 name = "hydrolysis"
 version = "0.3.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "accesskit",
  "android_logger",
@@ -2484,6 +2484,7 @@ dependencies = [
  "waterui-locale",
  "waterui-map",
  "waterui-shape",
+ "waterui-structural-transition",
  "waterui-text",
  "waterui-url",
  "waterui-watcher-set",
@@ -7347,7 +7348,7 @@ dependencies = [
 [[package]]
 name = "waterui"
 version = "0.5.2"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "waterui-dylib",
  "waterui-internal",
@@ -7356,7 +7357,7 @@ dependencies = [
 [[package]]
 name = "waterui-apple-os"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "objc2",
 ]
@@ -7364,7 +7365,7 @@ dependencies = [
 [[package]]
 name = "waterui-assets"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "blocking",
  "memmap2",
@@ -7377,7 +7378,7 @@ dependencies = [
 [[package]]
 name = "waterui-assets-core"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "blocking",
  "tempfile",
@@ -7387,7 +7388,7 @@ dependencies = [
 [[package]]
 name = "waterui-assets-macros"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -7400,7 +7401,7 @@ dependencies = [
 [[package]]
 name = "waterui-assets-planner"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "cargo_metadata",
  "heck",
@@ -7416,7 +7417,7 @@ dependencies = [
 [[package]]
 name = "waterui-backend-core"
 version = "0.5.2"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "kurbo",
  "nami",
@@ -7432,7 +7433,7 @@ dependencies = [
 [[package]]
 name = "waterui-color"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "cherenkov-record",
  "color",
@@ -7445,7 +7446,7 @@ dependencies = [
 [[package]]
 name = "waterui-contract"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "tracing",
 ]
@@ -7453,7 +7454,7 @@ dependencies = [
 [[package]]
 name = "waterui-controls"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "executor-core",
  "nami",
@@ -7470,7 +7471,7 @@ dependencies = [
 [[package]]
 name = "waterui-core"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",
@@ -7488,7 +7489,7 @@ dependencies = [
 [[package]]
 name = "waterui-dylib"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "waterui-internal",
 ]
@@ -7496,12 +7497,12 @@ dependencies = [
 [[package]]
 name = "waterui-easing"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 
 [[package]]
 name = "waterui-form"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "getrandom 0.4.3",
  "jiff",
@@ -7523,12 +7524,12 @@ dependencies = [
 [[package]]
 name = "waterui-git-head"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 
 [[package]]
 name = "waterui-graphics"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "arc-swap",
  "bytemuck",
@@ -7557,7 +7558,7 @@ dependencies = [
 [[package]]
 name = "waterui-icon"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "suiteki",
  "waterui-core",
@@ -7584,7 +7585,7 @@ dependencies = [
 [[package]]
 name = "waterui-inspector-protocol"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "bincode 2.0.1",
  "bitflags 2.13.2",
@@ -7602,7 +7603,7 @@ dependencies = [
 [[package]]
 name = "waterui-internal"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "async-channel",
  "cpu-time",
@@ -7633,6 +7634,7 @@ dependencies = [
  "waterui-meta",
  "waterui-navigation",
  "waterui-shape",
+ "waterui-structural-transition",
  "waterui-svg",
  "waterui-text",
  "waterui-url",
@@ -7644,7 +7646,7 @@ dependencies = [
 [[package]]
 name = "waterui-layout"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "nami",
  "num-traits",
@@ -7657,7 +7659,7 @@ dependencies = [
 [[package]]
 name = "waterui-locale"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "fixed_decimal",
  "iana-time-zone",
@@ -7685,7 +7687,7 @@ dependencies = [
 [[package]]
 name = "waterui-macros"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "icu_locale_core",
  "proc-macro-crate",
@@ -7699,7 +7701,7 @@ dependencies = [
 [[package]]
 name = "waterui-map"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "nami",
  "suiteki",
@@ -7710,7 +7712,7 @@ dependencies = [
 [[package]]
 name = "waterui-media"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "blocking",
  "executor-core",
@@ -7732,12 +7734,12 @@ dependencies = [
 [[package]]
 name = "waterui-meta"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 
 [[package]]
 name = "waterui-navigation"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "nami",
  "waterui-controls",
@@ -7751,7 +7753,7 @@ dependencies = [
 [[package]]
 name = "waterui-preview-protocol"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "image",
  "serde",
@@ -7762,11 +7764,19 @@ dependencies = [
 [[package]]
 name = "waterui-shape"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "nami",
  "waterui-core",
  "waterui-graphics",
+]
+
+[[package]]
+name = "waterui-structural-transition"
+version = "0.5.1"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
+dependencies = [
+ "waterui-core",
 ]
 
 [[package]]
@@ -7786,7 +7796,7 @@ dependencies = [
 [[package]]
 name = "waterui-testing"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "accesskit",
  "cargo_metadata",
@@ -7808,7 +7818,7 @@ dependencies = [
 [[package]]
 name = "waterui-text"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "nami",
  "parley",
@@ -7828,7 +7838,7 @@ dependencies = [
 [[package]]
 name = "waterui-url"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "base64",
  "nami-core",
@@ -7839,7 +7849,7 @@ dependencies = [
 [[package]]
 name = "waterui-video"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "nami",
  "thiserror 2.0.21",
@@ -7884,12 +7894,12 @@ dependencies = [
 [[package]]
 name = "waterui-watcher-set"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 
 [[package]]
 name = "waterui-webview"
 version = "0.5.1"
-source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#abd374b0c021e2b84dde0f00f758d08d8269a183"
+source = "git+https://github.com/water-rs/waterui?branch=refactor%2Fstrict-metadata#f2e069a5bf43285c2cd3e67efbf783ec824b589a"
 dependencies = [
  "base64",
  "cookie",
