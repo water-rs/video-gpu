@@ -46,7 +46,7 @@ use waterkit_video::{
 };
 use waterui_controls::{button, slider::slider};
 use waterui_core::{
-    AnyView, Binding, Environment, IgnorableMetadata, Metadata, SignalExt as _, State, View,
+    AnyView, Binding, Environment, Metadata, SignalExt as _, State, View,
     accessibility::{AccessibilityLabel, AccessibilityRole},
     binding,
     env::With,
@@ -2044,8 +2044,8 @@ impl View for VideoSurface {
             surface,
             self.android_surface_bridge,
         ));
-        let picture = IgnorableMetadata::new(
-            IgnorableMetadata::new(surface, AccessibilityRole::Image),
+        let picture = Metadata::new(
+            Metadata::new(surface, AccessibilityRole::Image),
             AccessibilityLabel::new("Video content"),
         );
         match fit {
