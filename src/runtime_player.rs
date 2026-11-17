@@ -73,7 +73,7 @@ use waterui_layout::{
 };
 use waterui_text::Text;
 
-use waterui_video::video::VideoEventHandler;
+use waterui_video::video::{BoundVideoEventHandler, NativeVideoConfig, NativeVideoPlayerConfig};
 use waterui_video::{
     AudioTrackInfo, AudioTrackSelection, ContentMode, DEFAULT_ASPECT, Delivery, DrmConfiguration,
     EquirectangularProjection, Event, LiveWindow, MediaItem, PlaybackConfiguration,
@@ -126,18 +126,12 @@ const PUMP_IDLE_INTERVAL_MS: u64 = 120;
 const PUMP_PENDING_FRAME_CAP_MS: u64 = 50;
 type OnEvent = Option<Rc<dyn Fn(Event) + 'static>>;
 
-/// Bridges an optional typed [`BoxedEventAction<Event>`] to the runtime player's
-/// optional shared callback by capturing the rendering [`Environment`] at hook
-/// time.
+/// Shares the event handler the backend bound to the rendering environment.
 ///
 /// The runtime player and its many sub-tasks share the callback via `Rc`
-/// clones, which requires the inner closure to be `Fn(Event)`. The
-/// user-facing API still takes a typed `EventHandler` (`FnMut(Event,
-/// &Environment)`) so that handlers can extract `State<T>` / environment
-/// values; the captured `env` here is what makes that extraction work
-/// even though the runtime invocation surface is itself `Fn(Event)`.
-fn bind_event_handler_to_env(handler: Option<VideoEventHandler>, env: Environment) -> OnEvent {
-    handler.map(|handler| handler.bind_callback(env))
+/// clones, which requires the inner closure to be `Fn(Event)`.
+fn shared_event_handler(handler: BoundVideoEventHandler) -> Rc<dyn Fn(Event)> {
+    Rc::new(move |event| handler.call(event))
 }
 
 fn emit_event(handler: &OnEvent, event: Event) {
@@ -710,14 +704,9 @@ enum DownloadUpdate {
     Failed(String),
 }
 
-pub fn install(env: &mut Environment, options: VideoGpuOptions) {
-    let video_options = options.clone();
-    env.insert_hook::<VideoConfig, AnyView>(move |env, config| {
-        video_hook(env, config, &video_options)
-    });
-    env.insert_hook::<VideoPlayerConfig, AnyView>(move |env, config| {
-        video_player_hook(env, config, &options)
-    });
+/// The options in `env`, or the platform defaults.
+fn options(env: &Environment) -> VideoGpuOptions {
+    env.get::<VideoGpuOptions>().cloned().unwrap_or_default()
 }
 
 fn prepare_runtime_source(
@@ -750,8 +739,7 @@ struct PreparedPlayback {
 }
 
 fn prepare_playback(
-    env: &Environment,
-    playback: PlaybackConfiguration<Option<VideoEventHandler>>,
+    playback: PlaybackConfiguration<Option<BoundVideoEventHandler>>,
 ) -> PreparedPlayback {
     let PlaybackConfiguration {
         controller,
@@ -780,7 +768,7 @@ fn prepare_playback(
         playback_policy,
         on_event,
     } = playback;
-    let on_event = bind_event_handler_to_env(on_event, env.clone());
+    let on_event = on_event.map(shared_event_handler);
     let (source, subtitle) = prepare_runtime_source(&source, &track_catalog);
     PreparedPlayback {
         controller,
@@ -813,7 +801,10 @@ fn prepare_playback(
     }
 }
 
-fn video_hook(env: &Environment, config: VideoConfig, options: &VideoGpuOptions) -> AnyView {
+/// The GPU player drawing a raw [`Video`](waterui_video::Video), configured by
+/// the [`VideoGpuOptions`] in `env`.
+pub fn video(env: &Environment, config: NativeVideoConfig) -> AnyView {
+    let options = &options(env);
     let VideoConfig {
         playback,
         content_mode,
@@ -837,7 +828,7 @@ fn video_hook(env: &Environment, config: VideoConfig, options: &VideoGpuOptions)
         playback_ui,
         playback_policy,
         on_event,
-    } = prepare_playback(env, playback);
+    } = prepare_playback(playback);
     let (ui_updates, ui_receivers) = ui_update_channel();
     start_ui_update_pump(
         ui_receivers,
@@ -874,11 +865,10 @@ fn video_hook(env: &Environment, config: VideoConfig, options: &VideoGpuOptions)
     AnyView::new(overlay(surface, subtitle_banner(&subtitle.text)).alignment(Alignment::Bottom))
 }
 
-fn video_player_hook(
-    env: &Environment,
-    config: VideoPlayerConfig,
-    options: &VideoGpuOptions,
-) -> AnyView {
+/// The GPU player drawing a [`VideoPlayer`](waterui_video::VideoPlayer) with
+/// its controls, configured by the [`VideoGpuOptions`] in `env`.
+pub fn video_player(env: &Environment, config: NativeVideoPlayerConfig) -> AnyView {
+    let options = &options(env);
     let VideoPlayerConfig {
         playback,
         content_mode,
@@ -902,7 +892,7 @@ fn video_player_hook(
         playback_ui,
         playback_policy,
         on_event,
-    } = prepare_playback(env, playback);
+    } = prepare_playback(playback);
     let player = PlayerBindings {
         is_playing: playback_ui.desired_playing.clone(),
         progress_display: Binding::f64(0.0),

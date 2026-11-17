@@ -72,7 +72,9 @@ half = "2.4"
 hydrolysis-m3 = "0.3.1"
 pollster = "1.0"
 waterui = { version = "0.5.2", features = ["video-gpu"] }
-waterui-testing = "0.5.1"
+# Hydrolysis draws `Video` through this crate under `video-gpu`; the patch
+# table below resolves it to this checkout.
+waterui-testing = { version = "0.5.1", features = ["video-gpu"] }
 
 [package.metadata.cargo-machete]
 ignored = ["shaderloom"]
@@ -195,4 +197,4 @@ waterui-svg = { git = "https://github.com/water-rs/svg", branch = "main" }
 # implements the backend contract the in-tree backend expects and follows its
 # `dev`, the source the framework's own patch table names.
 hydrolysis = { git = "https://github.com/water-rs/waterui", branch = "main" }
-hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", branch = "main" }
+hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", branch = "refactor/typed-navigation" }
