@@ -23,9 +23,11 @@ pub use android_video_surface::{AndroidVideoSurfaceBridge, AndroidVideoSurfaceHo
 use waterkit_audio::{AudioDevice, AudioOutput, PlayerError};
 use waterkit_video::{AnyLicenseServer, LicenseServer, ZenwaveLicenseServer};
 use waterui_core::Binding;
-use waterui_core::Environment;
 
-/// Backend configuration for self-drawn video playback.
+/// Configuration for self-drawn video playback.
+///
+/// An application inserts it into the environment; without it the player
+/// follows the platform's default audio route and license server.
 #[derive(Debug, Clone)]
 pub struct VideoGpuOptions {
     pub(crate) audio_output: AudioOutput,
@@ -96,13 +98,4 @@ pub fn audio_output_devices() -> Result<Vec<AudioDevice>, PlayerError> {
     AudioDevice::list()
 }
 
-/// Installs the self-drawn [`waterui_video::Video`] and
-/// [`waterui_video::VideoPlayer`] realization into an environment.
-pub fn install(env: &mut Environment) {
-    install_with_options(env, VideoGpuOptions::new());
-}
-
-/// Installs the self-drawn video realization with backend-specific options.
-pub fn install_with_options(env: &mut Environment, options: VideoGpuOptions) {
-    runtime_player::install(env, options);
-}
+pub use runtime_player::{video, video_player};
