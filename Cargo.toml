@@ -35,6 +35,8 @@ futures-timer = "3"
 # match the manifest versions the patched sources declare; a git patch cannot
 # satisfy a requirement its manifest does not carry.
 waterui-video = { version = "0.5.1" }
+waterui-accessibility = { version = "0.5.1", git = "https://github.com/water-rs/waterui", branch = "main" }
+waterui-interaction = { version = "0.5.1", git = "https://github.com/water-rs/waterui", branch = "main" }
 waterui-core = { version = "0.5.1" }
 waterui-layout = { version = "0.5.1" }
 waterui-controls = { version = "0.5.1" }
@@ -75,6 +77,7 @@ waterui = { version = "0.5.2", features = ["video-gpu"] }
 # Hydrolysis draws `Video` through this crate under `video-gpu`; the patch
 # table below resolves it to this checkout.
 waterui-testing = { version = "0.5.1", features = ["video-gpu"] }
+waterui-graphics = { version = "0.5.0", features = ["image-decode"] }
 
 [package.metadata.cargo-machete]
 ignored = ["shaderloom"]
@@ -197,4 +200,4 @@ waterui-svg = { git = "https://github.com/water-rs/svg", branch = "main" }
 # implements the backend contract the in-tree backend expects and follows its
 # `dev`, the source the framework's own patch table names.
 hydrolysis = { git = "https://github.com/water-rs/waterui", branch = "main" }
-hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", branch = "refactor/typed-navigation" }
+hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", branch = "refactor/4770-slim-core-ui" }
