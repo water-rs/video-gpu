@@ -44,16 +44,11 @@ use waterkit_video::{
     TransferFunction, VideoColorInfo, VideoReader, active_subtitle_text, embedded_subtitle_tracks,
     parse_subtitles_from_path, read_embedded_subtitle_cues,
 };
+use waterui_accessibility::{AccessibilityLabel, AccessibilityRole};
 use waterui_controls::{button, slider::slider};
 use waterui_core::{
-    AnyView, Binding, Environment, Metadata, SignalExt as _, State, View,
-    accessibility::{AccessibilityLabel, AccessibilityRole},
-    binding,
+    AnyView, Binding, Environment, Metadata, SignalExt as _, State, View, binding,
     env::With,
-    gesture::{
-        DragEvent, DragGesture, GestureObserver, GesturePhase, MagnificationEvent,
-        MagnificationGesture,
-    },
     id::SelfId,
     layout::{ProposalSize, Size, ViewDimensions},
 };
@@ -65,6 +60,9 @@ use waterui_graphics::gpu::wgpu;
 use waterui_graphics::{
     Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
     Frame as GpuContentFrame, FrameOutput, GpuContent, GpuView, RedrawHandle,
+};
+use waterui_interaction::gesture::{
+    DragEvent, DragGesture, GestureObserver, GesturePhase, MagnificationEvent, MagnificationGesture,
 };
 use waterui_layout::{
     frame::Frame,
