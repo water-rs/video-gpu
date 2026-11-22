@@ -1447,11 +1447,11 @@ fn picture_in_picture_button(request: &Binding<u64>) -> impl View + use<> {
     #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
         With::new(
-            button("PiP")
-                .accessibility_label("Enter picture in picture")
-                .action(|State(request): State<Binding<u64>>| {
+            button("PiP").a11y_label("Enter picture in picture").action(
+                |State(request): State<Binding<u64>>| {
                     request.with_mut(|request| *request = request.wrapping_add(1));
-                }),
+                },
+            ),
             State(request.clone()),
         )
     }
@@ -1538,7 +1538,7 @@ fn audio_track_toggle(
             button(Text::display(state.clone().map(|(labels, selection)| {
                 audio_selection_label(&labels, selection).unwrap_or_else(|message| message)
             })))
-            .accessibility_label(Text::display(state.map(|(labels, selection)| {
+            .a11y_label(Text::display(state.map(|(labels, selection)| {
                 audio_accessibility_label(&labels, selection).unwrap_or_else(|message| message)
             })))
             .action(
@@ -1565,7 +1565,7 @@ fn video_track_toggle(
             button(Text::display(state.clone().map(|(labels, selection)| {
                 video_selection_label(&labels, selection).unwrap_or_else(|message| message)
             })))
-            .accessibility_label(Text::display(state.map(|(labels, selection)| {
+            .a11y_label(Text::display(state.map(|(labels, selection)| {
                 video_accessibility_label(&labels, selection).unwrap_or_else(|message| message)
             })))
             .action(
@@ -1592,7 +1592,7 @@ fn subtitle_track_toggle(
             button(Text::display(state.clone().map(|(labels, selection)| {
                 subtitle_selection_label(&labels, selection).unwrap_or_else(|message| message)
             })))
-            .accessibility_label(Text::display(state.map(|(labels, selection)| {
+            .a11y_label(Text::display(state.map(|(labels, selection)| {
                 subtitle_accessibility_label(&labels, selection).unwrap_or_else(|message| message)
             })))
             .action(
@@ -1715,25 +1715,22 @@ fn seek_button(
     };
     With::new(
         With::new(
-            button(label)
-                .accessibility_label(accessibility_label)
-                .action(
-                    move |State(value): State<Binding<f64>>,
-                          State(duration): State<Binding<f64>>| {
-                        let duration = duration.snapshot();
-                        if duration <= f64::EPSILON {
-                            return;
-                        }
+            button(label).a11y_label(accessibility_label).action(
+                move |State(value): State<Binding<f64>>, State(duration): State<Binding<f64>>| {
+                    let duration = duration.snapshot();
+                    if duration <= f64::EPSILON {
+                        return;
+                    }
 
-                        let delta = (seconds.abs() / duration).min(1.0);
-                        let requested = if seconds.is_sign_negative() {
-                            value.snapshot() - delta
-                        } else {
-                            value.snapshot() + delta
-                        };
-                        value.set(requested.clamp(0.0, 1.0));
-                    },
-                ),
+                    let delta = (seconds.abs() / duration).min(1.0);
+                    let requested = if seconds.is_sign_negative() {
+                        value.snapshot() - delta
+                    } else {
+                        value.snapshot() + delta
+                    };
+                    value.set(requested.clamp(0.0, 1.0));
+                },
+            ),
             State(progress),
         ),
         State(duration),
@@ -1785,7 +1782,7 @@ fn speed_controls(
                     .clone()
                     .map(|rate| format!("{:.1}x", clamp_playback_rate(rate))),
             ))
-            .accessibility_label(Text::display(playback_rate_label))
+            .a11y_label(Text::display(playback_rate_label))
             .action(|State(rate): State<Binding<f32>>| {
                 let next = match rate.snapshot() {
                     current if current < 0.75 => 1.0,
@@ -1805,7 +1802,7 @@ fn speed_controls(
                     },
                 ),
             ))
-            .accessibility_label(Text::display(preserve_pitch_label))
+            .a11y_label(Text::display(preserve_pitch_label))
             .action(|State(enabled): State<Binding<bool>>| enabled.toggle()),
             State(preserve_pitch.clone()),
         ),
