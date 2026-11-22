@@ -2,7 +2,7 @@
 name = "waterui-video-gpu"
 version = "0.4.0"
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 authors = ["Lexo Liu <me@lexo.cool>"]
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
@@ -200,4 +200,4 @@ waterui-svg = { git = "https://github.com/water-rs/svg", branch = "main" }
 # implements the backend contract the in-tree backend expects and follows its
 # `dev`, the source the framework's own patch table names.
 hydrolysis = { git = "https://github.com/water-rs/waterui", branch = "main" }
-hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", branch = "refactor/4770-slim-core-ui" }
+hydrolysis-m3 = { git = "https://github.com/water-rs/hydrolysis-m3", branch = "main" }
