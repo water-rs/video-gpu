@@ -807,7 +807,7 @@ pub fn video(env: &Environment, config: NativeVideoConfig) -> AnyView {
         playback,
         content_mode,
         projection,
-        loops,
+        ..
     } = config;
     let PreparedPlayback {
         controller,
@@ -851,7 +851,6 @@ pub fn video(env: &Environment, config: NativeVideoConfig) -> AnyView {
         preserve_pitch,
         content_mode,
         projection,
-        loops,
         playback_policy,
         audio_output: options.audio_output.clone(),
         skip_silence: options.skip_silence.clone(),
@@ -931,7 +930,6 @@ pub fn video_player(env: &Environment, config: NativeVideoPlayerConfig) -> AnyVi
             preserve_pitch,
             content_mode,
             projection,
-            loops: false,
             playback_policy,
             audio_output: options.audio_output.clone(),
             skip_silence: options.skip_silence.clone(),
@@ -1951,7 +1949,6 @@ struct VideoSurfaceConfig {
     preserve_pitch: Binding<bool>,
     content_mode: ContentMode,
     projection: VideoProjection,
-    loops: bool,
     playback_policy: PlaybackPolicy,
     audio_output: AudioOutput,
     skip_silence: Binding<bool>,
@@ -2362,7 +2359,6 @@ struct VideoRenderer {
     preserve_pitch: Binding<bool>,
     content_mode: ContentMode,
     projection: VideoProjection,
-    loops: bool,
     playback_policy: PlaybackPolicy,
     audio_output: AudioOutput,
     skip_silence: Binding<bool>,
@@ -2602,7 +2598,6 @@ impl fmt::Debug for VideoRenderer {
             .field("source", &self.source)
             .field("subtitle_track_count", &self.subtitle_tracks.len())
             .field("active_subtitle_track", &self.active_subtitle_track)
-            .field("loops", &self.loops)
             .field("content_mode", &self.content_mode)
             .field("source_asset", &self.source_asset)
             .field("has_decode", &self.decode_worker.is_some())
@@ -2661,7 +2656,6 @@ impl VideoRenderer {
             preserve_pitch,
             content_mode,
             projection,
-            loops,
             playback_policy,
             audio_output,
             skip_silence,
@@ -2707,7 +2701,6 @@ impl VideoRenderer {
             preserve_pitch,
             content_mode,
             projection,
-            loops,
             playback_policy,
             audio_output,
             skip_silence,
@@ -4818,7 +4811,7 @@ impl VideoRenderer {
             self.emit_event(Event::Ended);
             self.playback_flags.ended_sent = true;
         }
-        if self.loops || self.playback.repeat.snapshot() == RepeatMode::One {
+        if self.playback.repeat.snapshot() == RepeatMode::One {
             self.loop_decoder_from_start(should_play);
         } else if self.has_next.snapshot() {
             request_next(&self.controller);
