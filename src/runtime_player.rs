@@ -892,14 +892,14 @@ pub fn video_player(env: &Environment, config: NativeVideoPlayerConfig) -> AnyVi
     } = prepare_playback(playback);
     let player = PlayerBindings {
         is_playing: playback_ui.desired_playing.clone(),
-        progress_display: Binding::f64(0.0),
+        progress_display: binding(0.0_f64),
         seek_target_seconds: playback_ui.seek_target_seconds.clone(),
         seek_generation: playback_ui.seek_generation.clone(),
         picture_in_picture_request: binding(0_u64),
         duration_seconds: playback_ui.duration_seconds.clone(),
         position_seconds: playback_ui.position_seconds.clone(),
         live_window: playback_ui.live_window.clone(),
-        is_buffering: Binding::bool(false),
+        is_buffering: binding(false),
         playback_rate: playback_rate.clone(),
         preserve_pitch: preserve_pitch.clone(),
         audio_track_labels: binding(Vec::new()),

@@ -22,7 +22,7 @@ pub use android_video_surface::{AndroidVideoSurfaceBridge, AndroidVideoSurfaceHo
 
 use waterkit_audio::{AudioDevice, AudioOutput, PlayerError};
 use waterkit_video::{AnyLicenseServer, LicenseServer, ZenwaveLicenseServer};
-use waterui_core::Binding;
+use waterui_core::{Binding, binding};
 
 /// Configuration for self-drawn video playback.
 ///
@@ -41,7 +41,7 @@ impl VideoGpuOptions {
     pub fn new() -> Self {
         Self {
             audio_output: AudioOutput::system_default(),
-            skip_silence: Binding::bool(false),
+            skip_silence: binding(false),
             license_server: AnyLicenseServer::new(ZenwaveLicenseServer),
         }
     }
