@@ -47,7 +47,7 @@ use waterkit_video::{
 use waterui_accessibility::{AccessibilityLabel, AccessibilityRole};
 use waterui_controls::{button, slider::slider};
 use waterui_core::{
-    AnyView, Binding, Environment, Metadata, SignalExt as _, State, View, binding,
+    Angle, AnyView, Binding, Environment, Metadata, SignalExt as _, State, View, binding,
     env::With,
     id::SelfId,
     layout::{ProposalSize, Size, ViewDimensions},
@@ -1857,17 +1857,17 @@ fn new_picture_in_picture_host_id() -> PictureInPictureHostId {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SphericalGestureAnchor {
-    yaw: f32,
-    pitch: f32,
-    vertical_field_of_view: f32,
+    yaw: Angle,
+    pitch: Angle,
+    vertical_field_of_view: Angle,
 }
 
 impl SphericalGestureAnchor {
     fn read(viewport: &SphericalViewport) -> Self {
         Self {
-            yaw: viewport.yaw_degrees(),
-            pitch: viewport.pitch_degrees(),
-            vertical_field_of_view: viewport.vertical_field_of_view_degrees(),
+            yaw: viewport.yaw(),
+            pitch: viewport.pitch(),
+            vertical_field_of_view: viewport.vertical_field_of_view(),
         }
     }
 }
@@ -1886,16 +1886,13 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
                 GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
                 GesturePhase::Updated => {
                     let start = anchor.snapshot();
+                    let yaw_delta =
+                        Angle::degrees(event.translation().x * SPHERICAL_GESTURE_DEGREES_PER_POINT);
+                    let pitch_delta =
+                        Angle::degrees(event.translation().y * SPHERICAL_GESTURE_DEGREES_PER_POINT);
                     viewport.set_orientation(
-                        event
-                            .translation()
-                            .x
-                            .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.yaw),
-                        event
-                            .translation()
-                            .y
-                            .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.pitch)
-                            .clamp(-90.0, 90.0),
+                        start.yaw - yaw_delta,
+                        (start.pitch - pitch_delta).clamp(-Angle::QUARTER, Angle::QUARTER),
                     );
                 }
                 GesturePhase::Ended | GesturePhase::Cancelled => {}
@@ -1904,9 +1901,10 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
                 GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
                 GesturePhase::Updated => {
                     let start = anchor.snapshot();
-                    viewport.set_vertical_field_of_view_degrees(
-                        (start.vertical_field_of_view / event.scale()).clamp(30.0, 120.0),
-                    );
+                    viewport.set_vertical_field_of_view(Angle::degrees(
+                        (start.vertical_field_of_view.to_degrees() / event.scale())
+                            .clamp(30.0, 120.0),
+                    ));
                 }
                 GesturePhase::Ended | GesturePhase::Cancelled => {}
             },
@@ -5578,9 +5576,9 @@ struct WarpParams {
 /// A snapshot of the spherical camera at pump time.
 #[derive(Debug, Clone, Copy)]
 struct SphericalState {
-    yaw_degrees: f32,
-    pitch_degrees: f32,
-    vertical_field_of_view_degrees: f32,
+    yaw: Angle,
+    pitch: Angle,
+    vertical_field_of_view: Angle,
     stereo_layout: SphericalStereoLayout,
 }
 
@@ -5588,9 +5586,9 @@ impl SphericalState {
     fn read(projection: &EquirectangularProjection) -> Self {
         let viewport = projection.viewport();
         Self {
-            yaw_degrees: viewport.yaw_degrees(),
-            pitch_degrees: viewport.pitch_degrees(),
-            vertical_field_of_view_degrees: viewport.vertical_field_of_view_degrees(),
+            yaw: viewport.yaw(),
+            pitch: viewport.pitch(),
+            vertical_field_of_view: viewport.vertical_field_of_view(),
             stereo_layout: projection.layout(),
         }
     }
@@ -5699,9 +5697,9 @@ impl WarpUniform {
             },
             |state| Self {
                 crop: [0.0, 0.0, 1.0, 1.0],
-                yaw_radians: state.yaw_degrees.to_radians(),
-                pitch_radians: state.pitch_degrees.to_radians(),
-                vertical_field_of_view_radians: state.vertical_field_of_view_degrees.to_radians(),
+                yaw_radians: state.yaw.to_radians(),
+                pitch_radians: state.pitch.to_radians(),
+                vertical_field_of_view_radians: state.vertical_field_of_view.to_radians(),
                 stereo_layout: match state.stereo_layout {
                     SphericalStereoLayout::Mono => 0,
                     SphericalStereoLayout::TopBottom => 1,
@@ -6138,10 +6136,8 @@ impl Drop for MediaSessionState {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "macos")]
-    use super::{ExternalFramePresenter, WarpInboxItem};
     use super::{
-        PlaybackObservability, PlaybackPolicy, PresentedFrameHistory, SphericalState,
+        Angle, PlaybackObservability, PlaybackPolicy, PresentedFrameHistory, SphericalState,
         VideoColorInfo, VideoWarpContent, Volume, WarpInbox, WarpParams, WarpUniform,
         effective_audio_volume, engine_frame_color, fill_crop, lock_warp_inbox,
         next_audio_selection, next_subtitle_selection, next_video_selection,
@@ -6151,6 +6147,8 @@ mod tests {
         select_live_catch_up_rate, should_enter_vod_stall_buffering, should_wait_for_vod_buffering,
         subtitle_track_info_labels, take_due_timed_metadata,
     };
+    #[cfg(target_os = "macos")]
+    use super::{ExternalFramePresenter, WarpInboxItem};
     use std::{
         cell::RefCell,
         fs,
@@ -6611,8 +6609,12 @@ mod tests {
 
     /// The equirectangular viewport every spherical visual draws.
     fn spherical_visual_projection() -> EquirectangularProjection {
-        EquirectangularProjection::new(SphericalViewport::new(25.0, 30.0, 100.0))
-            .stereo_layout(SphericalStereoLayout::Mono)
+        EquirectangularProjection::new(SphericalViewport::new(
+            Angle::degrees(25.0),
+            Angle::degrees(30.0),
+            Angle::degrees(100.0),
+        ))
+        .stereo_layout(SphericalStereoLayout::Mono)
     }
 
     /// A [`VideoWarpContent`] wired to an empty inbox.
@@ -6885,9 +6887,9 @@ mod tests {
         let params = WarpParams {
             video_size: (3840, 2160),
             spherical: Some(SphericalState {
-                yaw_degrees: 90.0,
-                pitch_degrees: -45.0,
-                vertical_field_of_view_degrees: 60.0,
+                yaw: Angle::degrees(90.0),
+                pitch: Angle::degrees(-45.0),
+                vertical_field_of_view: Angle::degrees(60.0),
                 stereo_layout: SphericalStereoLayout::TopBottom,
             }),
         };
