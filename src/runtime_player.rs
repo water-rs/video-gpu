@@ -62,9 +62,10 @@ use waterui_graphics::{
     Frame as GpuContentFrame, FrameOutput, GpuContent, GpuView, RedrawHandle,
 };
 use waterui_interaction::gesture::{
-    DragEvent, DragGesture, GestureObserver, GesturePhase, MagnificationEvent, MagnificationGesture,
+    DragGesture, GestureEvent, GestureObserver, GesturePhase, MagnificationGesture,
 };
 use waterui_layout::{
+    ContentMode,
     frame::Frame,
     overlay,
     stack::{Alignment, HStack, hstack, vstack},
@@ -73,13 +74,12 @@ use waterui_text::Text;
 
 use waterui_video::video::{BoundVideoEventHandler, NativeVideoConfig, NativeVideoPlayerConfig};
 use waterui_video::{
-    AudioTrackInfo, AudioTrackSelection, ContentMode, DEFAULT_ASPECT, Delivery, DrmConfiguration,
-    EquirectangularProjection, Event, LiveWindow, MediaItem, PlaybackConfiguration,
-    PlaybackMetrics, PlaybackOutputPath, PlaybackPhase, PlaybackPolicy, PlaybackPowerPolicy,
-    PlayerController, RepeatMode, SphericalStereoLayout, SphericalViewport, SubtitleSelection,
-    SubtitleTrack, SubtitleTrackInfo, SubtitleTrackOrigin, TimedMetadata, TrackCatalog, Url,
-    VideoConfig, VideoPlayerConfig, VideoProjection, VideoTrackInfo, VideoTrackSelection, Volume,
-    fit_video,
+    AudioTrackInfo, AudioTrackSelection, DEFAULT_ASPECT, Delivery, DrmConfiguration,
+    EquirectangularProjection, LiveWindow, MediaItem, PlaybackConfiguration, PlaybackMetrics,
+    PlaybackOutputPath, PlaybackPhase, PlaybackPolicy, PlaybackPowerPolicy, PlayerController,
+    RepeatMode, SphericalStereoLayout, SphericalViewport, SubtitleSelection, SubtitleTrack,
+    SubtitleTrackInfo, SubtitleTrackOrigin, TimedMetadata, TrackCatalog, Url, VideoEvent,
+    VideoProjection, VideoTrackInfo, VideoTrackSelection, Volume, fit_video,
 };
 
 use crate::VideoGpuOptions;
@@ -122,17 +122,17 @@ const PUMP_ACTIVE_INTERVAL_MS: u64 = 16;
 const PUMP_IDLE_INTERVAL_MS: u64 = 120;
 /// Upper bound for the wait before a due video frame is presented.
 const PUMP_PENDING_FRAME_CAP_MS: u64 = 50;
-type OnEvent = Option<Rc<dyn Fn(Event) + 'static>>;
+type OnEvent = Option<Rc<dyn Fn(VideoEvent) + 'static>>;
 
 /// Shares the event handler the backend bound to the rendering environment.
 ///
 /// The runtime player and its many sub-tasks share the callback via `Rc`
-/// clones, which requires the inner closure to be `Fn(Event)`.
-fn shared_event_handler(handler: BoundVideoEventHandler) -> Rc<dyn Fn(Event)> {
+/// clones, which requires the inner closure to be `Fn(VideoEvent)`.
+fn shared_event_handler(handler: BoundVideoEventHandler) -> Rc<dyn Fn(VideoEvent)> {
     Rc::new(move |event| handler.call(event))
 }
 
-fn emit_event(handler: &OnEvent, event: Event) {
+fn emit_event(handler: &OnEvent, event: VideoEvent) {
     if let Some(handler) = handler {
         handler(event);
     }
@@ -459,7 +459,7 @@ enum RuntimeSubtitleSource {
 
 #[derive(Debug)]
 enum UiUpdate {
-    Event(Event),
+    Event(VideoEvent),
     SeekRequest(Duration),
     Duration(f64),
     Buffering(bool),
@@ -515,20 +515,20 @@ fn apply_ui_update(
     match update {
         UiUpdate::Event(event) => {
             let phase = match &event {
-                Event::ReadyToPlay => Some(if playback.desired_playing.snapshot() {
+                VideoEvent::ReadyToPlay => Some(if playback.desired_playing.snapshot() {
                     PlaybackPhase::Playing
                 } else {
                     PlaybackPhase::Ready
                 }),
-                Event::Ended => Some(PlaybackPhase::Ended),
-                Event::Error { .. } => Some(PlaybackPhase::Failed),
-                Event::Buffering => Some(PlaybackPhase::Buffering),
-                Event::BufferingEnded => Some(if playback.desired_playing.snapshot() {
+                VideoEvent::Ended => Some(PlaybackPhase::Ended),
+                VideoEvent::Error { .. } => Some(PlaybackPhase::Failed),
+                VideoEvent::Buffering => Some(PlaybackPhase::Buffering),
+                VideoEvent::BufferingEnded => Some(if playback.desired_playing.snapshot() {
                     PlaybackPhase::Playing
                 } else {
                     PlaybackPhase::Paused
                 }),
-                Event::PlaybackStateChanged { playing } => Some(if *playing {
+                VideoEvent::PlaybackStateChanged { playing } => Some(if *playing {
                     PlaybackPhase::Playing
                 } else {
                     PlaybackPhase::Paused
@@ -803,12 +803,7 @@ fn prepare_playback(
 /// the [`VideoGpuOptions`] in `env`.
 pub fn video(env: &Environment, config: NativeVideoConfig) -> AnyView {
     let options = &options(env);
-    let VideoConfig {
-        playback,
-        content_mode,
-        projection,
-        ..
-    } = config;
+    let (playback, content_mode, projection) = config.into_parts();
     let PreparedPlayback {
         controller,
         source,
@@ -866,12 +861,7 @@ pub fn video(env: &Environment, config: NativeVideoConfig) -> AnyView {
 /// its controls, configured by the [`VideoGpuOptions`] in `env`.
 pub fn video_player(env: &Environment, config: NativeVideoPlayerConfig) -> AnyView {
     let options = &options(env);
-    let VideoPlayerConfig {
-        playback,
-        content_mode,
-        projection,
-        show_controls,
-    } = config;
+    let (playback, content_mode, projection, show_controls) = config.into_parts();
     let PreparedPlayback {
         controller,
         source,
@@ -1639,7 +1629,7 @@ fn transport_controls(bindings: TransportBindings, on_event: OnEvent) -> impl Vi
                 let controller = previous_controller.clone();
                 move || {
                     request_previous(&controller);
-                    emit_event(&on_event, Event::PreviousRequested);
+                    emit_event(&on_event, VideoEvent::PreviousRequested);
                 }
             })
         },
@@ -1660,7 +1650,7 @@ fn transport_controls(bindings: TransportBindings, on_event: OnEvent) -> impl Vi
                 let controller = next_controller.clone();
                 move || {
                     request_next(&controller);
-                    emit_event(&on_event, Event::NextRequested);
+                    emit_event(&on_event, VideoEvent::NextRequested);
                 }
             })
         },
@@ -1891,39 +1881,36 @@ fn spherical_interaction(view: impl View, projection: &VideoProjection) -> AnyVi
     let gesture = DragGesture::new(0.0).simultaneously_with(MagnificationGesture::new(1.0));
     AnyView::new(Metadata::new(
         view,
-        GestureObserver::new(gesture, move |env: Environment| {
-            if let Some(event) = env.get::<DragEvent>() {
-                match event.phase() {
-                    GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
-                    GesturePhase::Updated => {
-                        let start = anchor.snapshot();
-                        viewport.set_orientation(
-                            event
-                                .translation()
-                                .x
-                                .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.yaw),
-                            event
-                                .translation()
-                                .y
-                                .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.pitch)
-                                .clamp(-90.0, 90.0),
-                        );
-                    }
-                    GesturePhase::Ended | GesturePhase::Cancelled => {}
+        GestureObserver::new(gesture, move |event: GestureEvent| match event {
+            GestureEvent::Drag(event) => match event.phase() {
+                GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
+                GesturePhase::Updated => {
+                    let start = anchor.snapshot();
+                    viewport.set_orientation(
+                        event
+                            .translation()
+                            .x
+                            .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.yaw),
+                        event
+                            .translation()
+                            .y
+                            .mul_add(-SPHERICAL_GESTURE_DEGREES_PER_POINT, start.pitch)
+                            .clamp(-90.0, 90.0),
+                    );
                 }
-            }
-            if let Some(event) = env.get::<MagnificationEvent>() {
-                match event.phase() {
-                    GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
-                    GesturePhase::Updated => {
-                        let start = anchor.snapshot();
-                        viewport.set_vertical_field_of_view_degrees(
-                            (start.vertical_field_of_view / event.scale()).clamp(30.0, 120.0),
-                        );
-                    }
-                    GesturePhase::Ended | GesturePhase::Cancelled => {}
+                GesturePhase::Ended | GesturePhase::Cancelled => {}
+            },
+            GestureEvent::Magnification(event) => match event.phase() {
+                GesturePhase::Started => anchor.set(SphericalGestureAnchor::read(&viewport)),
+                GesturePhase::Updated => {
+                    let start = anchor.snapshot();
+                    viewport.set_vertical_field_of_view_degrees(
+                        (start.vertical_field_of_view / event.scale()).clamp(30.0, 120.0),
+                    );
                 }
-            }
+                GesturePhase::Ended | GesturePhase::Cancelled => {}
+            },
+            _ => {}
         }),
     ))
 }
@@ -1947,7 +1934,7 @@ struct VideoSurfaceConfig {
     muted: Binding<bool>,
     playback_rate: Binding<f32>,
     preserve_pitch: Binding<bool>,
-    content_mode: ContentMode,
+    content_mode: Option<ContentMode>,
     projection: VideoProjection,
     playback_policy: PlaybackPolicy,
     audio_output: AudioOutput,
@@ -1993,10 +1980,10 @@ impl View for VideoSurface {
     fn body(self, _env: &Environment) -> impl View {
         let spherical = self.renderer.borrow().projection.is_spherical();
         let content_mode = self.renderer.borrow().content_mode;
-        let fill = matches!(content_mode, ContentMode::Fill);
+        let fill = matches!(content_mode, Some(ContentMode::Fill));
         // A spherical video is a viewport into its sphere and has no picture
         // aspect to keep, so it fills its proposal in every content mode.
-        let fit = (content_mode == ContentMode::Fit && !spherical)
+        let fit = (content_mode == Some(ContentMode::Fit) && !spherical)
             .then(|| self.renderer.borrow().size.clone());
         // Planar video presents as the view's own engine layer through an
         // external frame: decoded planes are sampled in place, eligible for
@@ -2357,7 +2344,7 @@ struct VideoRenderer {
     muted: Binding<bool>,
     playback_rate: Binding<f32>,
     preserve_pitch: Binding<bool>,
-    content_mode: ContentMode,
+    content_mode: Option<ContentMode>,
     projection: VideoProjection,
     playback_policy: PlaybackPolicy,
     audio_output: AudioOutput,
@@ -3071,7 +3058,7 @@ impl VideoRenderer {
         }
         if matches!(self.delivery, Delivery::Progressive) {
             if let VideoTrackSelection::Track(index) = selection {
-                self.emit_event(Event::Error {
+                self.emit_event(VideoEvent::Error {
                     message: format!(
                         "progressive playback has no adaptive video representation at index {index}"
                     ),
@@ -3531,7 +3518,7 @@ impl VideoRenderer {
         let position = self.playback_position(now);
         let events = take_due_timed_metadata(&mut self.timed_metadata, position);
         for event in events {
-            self.emit_event(Event::TimedMetadata {
+            self.emit_event(VideoEvent::TimedMetadata {
                 metadata: TimedMetadata::new(
                     event.scheme_id_uri(),
                     event.value(),
@@ -3820,7 +3807,7 @@ impl VideoRenderer {
             self.source_flags.source_error = ErrorReportState::Clear;
         }
         self.control_flags.play_requested = playing;
-        self.emit_event(Event::PlaybackStateChanged { playing });
+        self.emit_event(VideoEvent::PlaybackStateChanged { playing });
     }
 
     fn set_audio_focus_ducked(&mut self, ducked: bool) {
@@ -3930,13 +3917,13 @@ impl VideoRenderer {
                 self.controller
                     .next()
                     .expect("enabled next media command must resolve a playlist item");
-                self.emit_event(Event::NextRequested);
+                self.emit_event(VideoEvent::NextRequested);
             }
             MediaCommand::Previous => {
                 self.controller
                     .previous()
                     .expect("enabled previous media command must resolve a playlist item");
-                self.emit_event(Event::PreviousRequested);
+                self.emit_event(VideoEvent::PreviousRequested);
             }
             _ => {
                 tracing::warn!("ignoring unsupported video media command {command:?}");
@@ -4106,7 +4093,7 @@ impl VideoRenderer {
         }
 
         self.last_reported_buffer_level_ms = Some(buffered_ms);
-        self.emit_event(Event::BufferLevel { buffered_ms });
+        self.emit_event(VideoEvent::BufferLevel { buffered_ms });
     }
 
     fn video_timeline_position(&self, now: Instant) -> Duration {
@@ -4138,7 +4125,7 @@ impl VideoRenderer {
             self.av_drift_ms(now),
         );
         self.observability.last_report_at = Some(now);
-        self.emit_event(Event::PlaybackMetrics { metrics });
+        self.emit_event(VideoEvent::PlaybackMetrics { metrics });
     }
 
     fn should_wait_for_vod_buffer(&self, now: Instant) -> bool {
@@ -4233,16 +4220,16 @@ impl VideoRenderer {
         }
     }
 
-    fn emit_event(&self, event: Event) {
+    fn emit_event(&self, event: VideoEvent) {
         self.push_ui_update(UiUpdate::Event(event));
     }
 
     fn set_buffering(&mut self, buffering: bool) {
         if self.apply_buffering(buffering) {
             self.emit_event(if buffering {
-                Event::Buffering
+                VideoEvent::Buffering
             } else {
-                Event::BufferingEnded
+                VideoEvent::BufferingEnded
             });
             self.maybe_emit_buffer_level(Instant::now());
         }
@@ -4251,10 +4238,10 @@ impl VideoRenderer {
     /// The single exit for every unrecoverable playback failure: reports the
     /// error and clears the buffering state without announcing
     /// `BufferingEnded`, which would tell observers playback can continue.
-    /// `Event::Error` stays the last event so the phase remains `Failed`.
+    /// `VideoEvent::Error` stays the last event so the phase remains `Failed`.
     fn fail_playback(&mut self, message: String) {
         self.apply_buffering(false);
-        self.emit_event(Event::Error { message });
+        self.emit_event(VideoEvent::Error { message });
     }
 
     /// Reports a source failure once per source; the buffering state clears on
@@ -4548,7 +4535,7 @@ impl VideoRenderer {
             }
             #[cfg(target_os = "android")]
             DecoderOutput::OfflineDrmKeySetChanged(key_set) => {
-                self.emit_event(Event::OfflineDrmKeySetChanged { key_set });
+                self.emit_event(VideoEvent::OfflineDrmKeySetChanged { key_set });
                 DecoderDrain::Continue
             }
             DecoderOutput::StreamingAudioOpened(player) => {
@@ -4607,7 +4594,7 @@ impl VideoRenderer {
         if let Err(message) = self.sync_selected_subtitle_track() {
             self.set_subtitle_text(None);
             if self.source_flags.subtitle_error == ErrorReportState::Clear {
-                self.emit_event(Event::Error { message });
+                self.emit_event(VideoEvent::Error { message });
                 self.source_flags.subtitle_error = ErrorReportState::Reported;
             }
         }
@@ -4647,10 +4634,10 @@ impl VideoRenderer {
             }
         }
         if !self.playback_flags.ready_sent {
-            self.emit_event(Event::PlaybackOutputPathChanged {
+            self.emit_event(VideoEvent::PlaybackOutputPathChanged {
                 path: self.playback_output_path,
             });
-            self.emit_event(Event::ReadyToPlay);
+            self.emit_event(VideoEvent::ReadyToPlay);
             self.playback_flags.ready_sent = true;
         }
         self.sync_audio_playback(should_play);
@@ -4808,7 +4795,7 @@ impl VideoRenderer {
 
         self.playback_flags.decoder_lifecycle = DecoderLifecycle::Active;
         if !self.playback_flags.ended_sent {
-            self.emit_event(Event::Ended);
+            self.emit_event(VideoEvent::Ended);
             self.playback_flags.ended_sent = true;
         }
         if self.playback.repeat.snapshot() == RepeatMode::One {
@@ -4867,7 +4854,7 @@ impl VideoRenderer {
         {
             self.pending_forward_steps = 0;
             self.pending_backward_steps = 0;
-            self.emit_event(Event::Error {
+            self.emit_event(VideoEvent::Error {
                 message: String::from(
                     "frame stepping requires decoded video-frame access and is incompatible with a required offload/tunneling path",
                 ),
@@ -4881,7 +4868,7 @@ impl VideoRenderer {
         if self.pending_backward_steps > 0 {
             self.pending_backward_steps -= 1;
             let Some(target) = self.presented_frame_history.rewind() else {
-                self.emit_event(Event::Error {
+                self.emit_event(VideoEvent::Error {
                     message: String::from(
                         "backward frame stepping requires a previous frame retained within the playback buffer",
                     ),
@@ -4900,7 +4887,7 @@ impl VideoRenderer {
             || (self.playback_flags.decoder_lifecycle == DecoderLifecycle::Exhausted
                 && self.pending_video_presentation_time().is_none())
         {
-            self.emit_event(Event::Error {
+            self.emit_event(VideoEvent::Error {
                 message: String::from("forward frame stepping reached the end of decoded media"),
             });
             return;
@@ -4931,7 +4918,7 @@ impl VideoRenderer {
         spawn_local(async move {
             let mut controller = PictureInPictureController::new(host_id);
             if let Err(error) = controller.enter(aspect_ratio).await {
-                let _ = updates.try_send(UiUpdate::Event(Event::Error {
+                let _ = updates.try_send(UiUpdate::Event(VideoEvent::Error {
                     message: error.to_string(),
                 }));
             }
@@ -4986,7 +4973,7 @@ impl VideoRenderer {
                     if log_only {
                         tracing::error!(%error, "failed to clear picture-in-picture controller");
                     } else {
-                        let _ = updates.try_send(UiUpdate::Event(Event::Error {
+                        let _ = updates.try_send(UiUpdate::Event(VideoEvent::Error {
                             message: error.to_string(),
                         }));
                     }
@@ -5001,7 +4988,7 @@ impl VideoRenderer {
             if log_only {
                 tracing::error!(%error, "failed to clear picture-in-picture controller");
             } else {
-                self.emit_event(Event::Error {
+                self.emit_event(VideoEvent::Error {
                     message: error.to_string(),
                 });
             }
@@ -5027,7 +5014,7 @@ impl VideoRenderer {
         }
 
         self.last_picture_in_picture_active = Some(active);
-        self.emit_event(Event::PictureInPictureChanged { active });
+        self.emit_event(VideoEvent::PictureInPictureChanged { active });
     }
 
     #[cfg(target_os = "android")]
@@ -5040,7 +5027,7 @@ impl VideoRenderer {
             match PictureInPictureController::new(self.picture_in_picture_host_id).is_active() {
                 Ok(active) => active,
                 Err(error) => {
-                    self.emit_event(Event::Error {
+                    self.emit_event(VideoEvent::Error {
                         message: error.to_string(),
                     });
                     return;
@@ -5118,7 +5105,7 @@ impl VideoRenderer {
         if let Err(message) = self.ensure_subtitle_cues() {
             self.set_subtitle_text(None);
             if self.source_flags.subtitle_error == ErrorReportState::Clear {
-                self.emit_event(Event::Error { message });
+                self.emit_event(VideoEvent::Error { message });
                 self.source_flags.subtitle_error = ErrorReportState::Reported;
             }
         }
@@ -5803,20 +5790,20 @@ impl GpuContent for VideoWarpContent {
             // which the mailbox never does.
             let gpu_frame = DecodedFrameUploader::new().upload(
                 item.frame.into_frame(),
-                frame.device,
-                frame.queue,
+                frame.device(),
+                frame.queue(),
             );
             let texture = self
                 .converter
                 .as_ref()
                 .expect("warp converter is installed in setup")
-                .convert(frame.device, frame.queue, &gpu_frame, color);
+                .convert(frame.device(), frame.queue(), &gpu_frame, color);
             self.frame = Some(texture);
             self.presented_serial = item.serial;
         }
 
-        let uniform = WarpUniform::resolve(params, frame.width, frame.height);
-        frame.queue.write_buffer(
+        let uniform = WarpUniform::resolve(params, frame.width(), frame.height());
+        frame.queue().write_buffer(
             self.params
                 .as_ref()
                 .expect("warp params buffer is installed in setup"),
@@ -5825,7 +5812,7 @@ impl GpuContent for VideoWarpContent {
         );
 
         let mut encoder = frame
-            .device
+            .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Video warp encoder"),
             });
@@ -5833,7 +5820,7 @@ impl GpuContent for VideoWarpContent {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Video warp pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: frame.view,
+                    view: frame.view(),
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -5848,35 +5835,37 @@ impl GpuContent for VideoWarpContent {
             });
             if let Some(texture) = self.frame.as_ref() {
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let bind_group = frame.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Video warp bind group"),
-                    layout: self
-                        .bind_group_layout
-                        .as_ref()
-                        .expect("warp layout is installed in setup"),
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(
-                                self.sampler
+                let bind_group = frame
+                    .device()
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Video warp bind group"),
+                        layout: self
+                            .bind_group_layout
+                            .as_ref()
+                            .expect("warp layout is installed in setup"),
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(
+                                    self.sampler
+                                        .as_ref()
+                                        .expect("warp sampler is installed in setup"),
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: self
+                                    .params
                                     .as_ref()
-                                    .expect("warp sampler is installed in setup"),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: self
-                                .params
-                                .as_ref()
-                                .expect("warp params buffer is installed in setup")
-                                .as_entire_binding(),
-                        },
-                    ],
-                });
+                                    .expect("warp params buffer is installed in setup")
+                                    .as_entire_binding(),
+                            },
+                        ],
+                    });
                 pass.set_pipeline(
                     self.pipeline
                         .as_ref()
@@ -5886,7 +5875,7 @@ impl GpuContent for VideoWarpContent {
                 pass.draw(0..6, 0..1);
             }
         }
-        frame.queue.submit([encoder.finish()]);
+        frame.queue().submit([encoder.finish()]);
         frame.request_redraw();
     }
 
@@ -6181,6 +6170,7 @@ mod tests {
         SubtitleTrackSelection as EngineSubtitleTrackSelection,
         TimedMetadata as EngineTimedMetadata, TransferFunction,
     };
+    use waterui_graphics::backend::GpuContentLeaf;
     use waterui_graphics::{
         ExternalFrameSource, ExternalFrameView, FrameOutput, RedrawHandle,
         gpu::{
@@ -6650,8 +6640,8 @@ mod tests {
     ) {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
-        let mut view = waterui_graphics::GpuView::new(warp_content);
-        let boxed = view.take_engine_content();
+        let mut leaf = GpuContentLeaf::new(warp_content);
+        let boxed = leaf.take_engine_content();
         let mut renderer = pollster::block_on(GpuContentRenderer::new(
             runtime,
             context.clone(),

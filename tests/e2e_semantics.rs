@@ -2,17 +2,16 @@
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
-use hydrolysis_m3::Material3;
 use waterui::Signal as _;
 use waterui::View;
 use waterui::ViewExt as _;
 use waterui_testing::{
-    OffscreenApp, Role, RuntimeDriver, Selector, SemanticApp, Styled, UiBuilder, WaitOptions,
+    Expectation, OffscreenApp, Role, RuntimeDriver, Selector, SemanticApp, UiBuilder, WaitOptions,
     WaitResult,
 };
 use waterui_video::{
-    Event, MediaItem, PlaybackPhase, PlaybackSession, PlayerController, Playlist, Url, VideoPlayer,
-    video,
+    MediaItem, PlaybackPhase, PlaybackSession, PlayerController, Playlist, Url, VideoEvent,
+    VideoPlayer, video,
 };
 
 fn missing_video_url() -> Url {
@@ -114,7 +113,9 @@ fn assert_queue_navigation_reacts(app: &mut SemanticApp, controller: &PlayerCont
     controller.add_item(MediaItem::from(missing_video_url()));
     assert!(
         app.wait_for(
-            &[app.expect_exists(Selector::default().role(Role::BUTTON).label("Next"))],
+            &[Expectation::exists(
+                Selector::default().role(Role::BUTTON).label("Next"),
+            )],
             WaitOptions::new(Duration::from_millis(200)),
         ) == WaitResult::Completed,
         "video-player-controls-are-accessible-and-reactive: next should appear after appending an item; {}",
@@ -125,7 +126,9 @@ fn assert_queue_navigation_reacts(app: &mut SemanticApp, controller: &PlayerCont
         .expect("the appended playlist item must be navigable");
     assert_eq!(
         app.wait_for(
-            &[app.expect_exists(Selector::default().role(Role::BUTTON).label("Previous"))],
+            &[Expectation::exists(
+                Selector::default().role(Role::BUTTON).label("Previous"),
+            )],
             WaitOptions::new(Duration::from_millis(200)),
         ),
         WaitResult::Completed,
@@ -140,7 +143,7 @@ fn assert_queue_navigation_reacts(app: &mut SemanticApp, controller: &PlayerCont
 
 fn tap_and_assert_label<R: RuntimeDriver>(app: &mut SemanticApp<R>, current: &str, updated: &str) {
     app.query().role(Role::BUTTON).label(current).tap();
-    let expected = app.expect_exists(Selector::default().role(Role::BUTTON).label(updated));
+    let expected = Expectation::exists(Selector::default().role(Role::BUTTON).label(updated));
     assert_eq!(
         app.wait_for(&[expected], WaitOptions::new(Duration::from_millis(200))),
         WaitResult::Completed,
@@ -195,9 +198,7 @@ fn video_player_controls_are_accessible_and_reactive(ui: UiBuilder) {
 }
 
 #[waterui::test(theme = hydrolysis_m3::Material3::defaults(), viewport = (480, 320))]
-fn self_drawn_player_controls_render_without_retrying_a_failed_source(
-    ui: UiBuilder<Styled<Material3>>,
-) {
+fn self_drawn_player_controls_render_without_retrying_a_failed_source(ui: UiBuilder) {
     let decoder_errors = Rc::new(RefCell::new(Vec::new()));
     let decoder_errors_for_view = Rc::clone(&decoder_errors);
     let events = Rc::new(RefCell::new(Vec::new()));
@@ -211,9 +212,9 @@ fn self_drawn_player_controls_render_without_retrying_a_failed_source(
             .on_event({
                 let decoder_errors = Rc::clone(&decoder_errors_for_view);
                 let events = Rc::clone(&events_for_view);
-                move |event: Event| {
+                move |event: VideoEvent| {
                     events.borrow_mut().push(format!("{event:?}"));
-                    if let Event::Error { message } = event {
+                    if let VideoEvent::Error { message } = event {
                         decoder_errors.borrow_mut().push(message);
                     }
                 }
