@@ -52,14 +52,13 @@ use waterui_core::{
     id::SelfId,
     layout::{ProposalSize, Size, ViewDimensions},
 };
-use waterui_graphics::gpu::RetiredOutput;
 use waterui_graphics::gpu::interop::{
     ChromaSiting, ExternalFrame, FrameColor, Primaries, RgbAlpha, Transfer, YuvMatrix, YuvRange,
 };
-use waterui_graphics::gpu::wgpu;
+use waterui_graphics::gpu::{GpuContent, GpuView, RetiredOutput, wgpu};
 use waterui_graphics::{
     Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
-    Frame as GpuContentFrame, FrameOutput, GpuContent, GpuView, RedrawHandle,
+    Frame as GpuContentFrame, FrameOutput, RedrawHandle,
 };
 use waterui_interaction::gesture::{
     DragGesture, GestureEvent, GestureObserver, GesturePhase, MagnificationGesture,
