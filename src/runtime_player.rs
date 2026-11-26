@@ -55,10 +55,10 @@ use waterui_core::{
 use waterui_graphics::gpu::interop::{
     ChromaSiting, ExternalFrame, FrameColor, Primaries, RgbAlpha, Transfer, YuvMatrix, YuvRange,
 };
-use waterui_graphics::gpu::{GpuContent, GpuView, RetiredOutput, wgpu};
+use waterui_graphics::gpu::{RetiredOutput, wgpu};
 use waterui_graphics::{
     Color, Context as GpuContentContext, ExternalFrameSource, ExternalFrameView,
-    Frame as GpuContentFrame, FrameOutput, RedrawHandle,
+    Frame as GpuContentFrame, FrameOutput, GpuContent, GpuView, RedrawHandle,
 };
 use waterui_interaction::gesture::{
     DragGesture, GestureEvent, GestureObserver, GesturePhase, MagnificationGesture,
@@ -5749,6 +5749,8 @@ fn fill_crop(
 
 /// [`GpuContent`] for the spherical and aspect-fill presentations.
 impl GpuContent for VideoWarpContent {
+    type Params = ();
+
     fn measure(&self, proposal: ProposalSize) -> ViewDimensions {
         fill_proposal(proposal)
     }
@@ -6169,7 +6171,7 @@ mod tests {
     };
     use waterui_graphics::backend::GpuContentLeaf;
     use waterui_graphics::{
-        ExternalFrameSource, ExternalFrameView, FrameOutput, RedrawHandle,
+        ExternalFrameSource, ExternalFrameView, FrameOutput, GpuView, RedrawHandle,
         gpu::{
             Display, ExternalFrameRenderer, FrameTime, GpuContentRenderer, GpuRuntime, Readback,
             interop::{ExternalFrame, Primaries, Transfer, YuvMatrix, YuvRange},
@@ -6641,7 +6643,7 @@ mod tests {
     ) {
         let context = runtime.context();
         let (device, queue) = (context.device(), context.queue());
-        let mut leaf = GpuContentLeaf::new(warp_content);
+        let mut leaf = GpuContentLeaf::from(GpuView::new(warp_content));
         let boxed = leaf.take_engine_content();
         let mut renderer = pollster::block_on(GpuContentRenderer::new(
             runtime,
